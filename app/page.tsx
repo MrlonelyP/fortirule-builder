@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useMemo, useRef, useState } from "react";
 
 type WanConnectionType = "static" | "dhcp" | "pppoe";
 type FortiOsVersion = "7.0" | "7.2" | "7.4" | "7.6";
@@ -8,6 +8,8 @@ type FortiGateModel = "40F" | "60F" | "70F" | "70G" | "80F" | "90G" | "100F" | "
 type Service = "ALL" | "HTTP" | "HTTPS" | "DNS" | "RDP" | "PING";
 type Action = "ACCEPT" | "DENY";
 type NatMode = "AUTO" | "ENABLE" | "DISABLE";
+type ZoneStatus = "Ready" | "Need Config" | "Warning" | "Disabled";
+type SelectedZone = "wan" | "vlan-10" | "vlan-20" | "vlan-30" | "vlan-40" | "vpn" | "nat" | "policy" | "backup";
 
 type ProjectProfile = {
   projectName: string;
@@ -66,9 +68,11 @@ type VlanDraft = Omit<Vlan, "uid">;
 type PolicyDraft = Omit<PolicyRule, "uid">;
 
 const inputClass =
-  "w-full rounded-xl border border-sky-900/80 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20";
-const labelClass = "mb-1 block text-xs font-bold uppercase tracking-[0.14em] text-sky-200/80";
-const cardClass = "rounded-2xl border border-sky-900/70 bg-[#0b1730]/90 shadow-xl shadow-slate-950/30 ring-1 ring-cyan-300/5";
+  "w-full rounded-xl border border-cyan-400/20 bg-slate-950/70 px-3 py-2 text-sm text-cyan-50 outline-none transition placeholder:text-slate-500 focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20";
+const labelClass = "mb-1 block text-[11px] font-black uppercase tracking-[0.18em] text-cyan-200/80";
+const panelClass = "rounded-[1.75rem] border border-cyan-300/20 bg-slate-950/65 shadow-2xl shadow-cyan-950/30 backdrop-blur-xl";
+const buildingBaseClass =
+  "group relative min-h-32 overflow-hidden rounded-[1.6rem] border border-cyan-300/25 bg-slate-950/75 p-4 text-left shadow-2xl shadow-cyan-950/40 transition hover:-translate-y-1 hover:border-cyan-200/70 hover:shadow-cyan-500/20";
 
 const internetDestination = "internet";
 const fortigateModels: FortiGateModel[] = ["40F", "60F", "70F", "70G", "80F", "90G", "100F", "100G", "200F", "400F", "Custom"];
@@ -138,7 +142,7 @@ const defaultPolicyDraft: PolicyDraft = {
   nat: "AUTO",
 };
 
-const firmwareChecklist = [
+const deploymentChecklist = [
   "Firmware Check",
   "WAN Configuration",
   "LAN / VLAN Configuration",
@@ -149,11 +153,7 @@ const firmwareChecklist = [
   "Backup Configuration",
 ];
 
-const sidebarSections = [
-  { title: "Menu", items: ["Dashboard", "WAN", "LAN / VLAN", "DHCP", "Firewall Policy", "NAT", "VPN", "Routing", "System"] },
-  { title: "Tools", items: ["IP Calculator", "Network Diagram", "Templates"] },
-  { title: "Deployment", items: ["Checklist", "Backup / Restore"] },
-];
+const sidebarItems = ["City Map", "Zones", "Policies", "VPN", "Export", "Settings"];
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -162,22 +162,6 @@ function Field({ label, children, hint }: { label: string; children: React.React
       {children}
       {hint ? <span className="mt-1 block text-xs leading-5 text-slate-400">{hint}</span> : null}
     </label>
-  );
-}
-
-function MetricCard({ label, value, tone = "cyan" }: { label: string; value: string; tone?: "cyan" | "green" | "red" | "blue" }) {
-  const toneClass = {
-    cyan: "border-cyan-400/30 text-cyan-100",
-    green: "border-emerald-400/30 text-emerald-100",
-    red: "border-red-400/30 text-red-100",
-    blue: "border-blue-400/30 text-blue-100",
-  }[tone];
-
-  return (
-    <div className={`rounded-2xl border bg-slate-950/45 p-4 ${toneClass}`}>
-      <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{label}</p>
-      <p className="mt-2 text-lg font-black">{value}</p>
-    </div>
   );
 }
 
@@ -227,13 +211,23 @@ function getNatLabel(policy: PolicyRule | PolicyDraft) {
   return policy.nat === "ENABLE" ? "Enable" : "Disable";
 }
 
-function cidrFromMask(mask: string) {
-  const bits = mask
-    .split(".")
-    .map((part) => Number(part).toString(2).padStart(8, "0"))
-    .join("")
-    .split("1").length - 1;
-  return Number.isFinite(bits) ? bits : 24;
+
+function getZoneStatus(zone: SelectedZone, form: BasicFortigateForm, vlans: Vlan[], policies: PolicyRule[]): ZoneStatus {
+  if (zone === "vpn") return form.enableSslVpn ? "Ready" : "Disabled";
+  if (zone === "policy") return policies.length > 0 ? "Ready" : "Need Config";
+  if (zone === "nat") return policies.some((policy) => getEffectiveNat(policy) === "enable") ? "Ready" : "Warning";
+  if (zone === "backup") return "Warning";
+  if (zone === "wan") return form.wanInterface && (form.wanConnectionType !== "static" || form.wanGateway) ? "Ready" : "Need Config";
+  return vlans.some((vlan) => vlan.uid === zone) ? "Ready" : "Need Config";
+}
+
+function statusClass(status: ZoneStatus) {
+  return {
+    Ready: "border-emerald-300/40 bg-emerald-400/10 text-emerald-200",
+    "Need Config": "border-amber-300/50 bg-amber-400/10 text-amber-200",
+    Warning: "border-orange-300/50 bg-orange-400/10 text-orange-200",
+    Disabled: "border-slate-400/30 bg-slate-500/10 text-slate-300",
+  }[status];
 }
 
 function buildWanCli(form: BasicFortigateForm) {
@@ -247,7 +241,36 @@ function buildWanCli(form: BasicFortigateForm) {
 
 function buildVlanAndDhcpCli(vlans: Vlan[], dnsPrimary: string, dnsSecondary: string) {
   return vlans
-    .map((vlan, index) => `# VLAN ${index + 1}: ${getVlanName(vlan)}\n# คำอธิบาย: สร้าง VLAN ${vlan.vlanId} บน ${vlan.interfaceName} พร้อม DHCP ${vlan.dhcpStartIp}-${vlan.dhcpEndIp}\nconfig system interface\n    edit \"${getVlanName(vlan)}\"\n        set role lan\n        set interface \"${vlan.interfaceName}\"\n        set vlanid ${vlan.vlanId}\n        set ip ${vlan.gatewayIp} ${vlan.subnetMask}\n        set allowaccess ping https ssh\n    next\nend\n\nconfig system dhcp server\n    edit 0\n        set interface \"${getVlanName(vlan)}\"\n        set default-gateway ${vlan.gatewayIp}\n        set netmask ${vlan.subnetMask}\n        set dns-service specify\n        set dns-server1 ${dnsPrimary}\n        set dns-server2 ${dnsSecondary}\n        config ip-range\n            edit 1\n                set start-ip ${vlan.dhcpStartIp}\n                set end-ip ${vlan.dhcpEndIp}\n            next\n        end\n    next\nend`)
+    .map(
+      (vlan, index) => `# VLAN ${index + 1}: ${getVlanName(vlan)}
+# คำอธิบาย: สร้าง VLAN ${vlan.vlanId} บน ${vlan.interfaceName} พร้อม DHCP ${vlan.dhcpStartIp}-${vlan.dhcpEndIp}
+config system interface
+    edit \"${getVlanName(vlan)}\"
+        set role lan
+        set interface \"${vlan.interfaceName}\"
+        set vlanid ${vlan.vlanId}
+        set ip ${vlan.gatewayIp} ${vlan.subnetMask}
+        set allowaccess ping https ssh
+    next
+end
+
+config system dhcp server
+    edit 0
+        set interface \"${getVlanName(vlan)}\"
+        set default-gateway ${vlan.gatewayIp}
+        set netmask ${vlan.subnetMask}
+        set dns-service specify
+        set dns-server1 ${dnsPrimary}
+        set dns-server2 ${dnsSecondary}
+        config ip-range
+            edit 1
+                set start-ip ${vlan.dhcpStartIp}
+                set end-ip ${vlan.dhcpEndIp}
+            next
+        end
+    next
+end`,
+    )
     .join("\n\n");
 }
 
@@ -259,25 +282,96 @@ function buildPolicyCli(policies: PolicyRule[], vlans: Vlan[], wanInterface: str
       const destinationInterface = policy.destination === internetDestination ? wanInterface : getVlanName(destination);
       const actionText = policy.action === "ACCEPT" ? "อนุญาต" : "ปฏิเสธ";
       const natText = getEffectiveNat(policy) === "enable" ? "เปิด NAT" : "ปิด NAT";
-      return `# Policy ${index + 1}: ${policy.name}\n# คำอธิบาย: ${actionText} จาก ${getVlanName(source)} ไปยัง ${getDestinationName(policy.destination, vlans)} service ${policy.service} และ ${natText}\nconfig firewall policy\n    edit 0\n        set name \"${policy.name}\"\n        set srcintf \"${getVlanName(source)}\"\n        set dstintf \"${destinationInterface}\"\n        set srcaddr \"all\"\n        set dstaddr \"all\"\n        set action ${policy.action.toLowerCase()}\n        set schedule \"always\"\n        set service \"${policy.service}\"\n        set logtraffic all\n        set nat ${getEffectiveNat(policy)}\n    next\nend`;
+      return `# Policy ${index + 1}: ${policy.name}
+# คำอธิบาย: ${actionText} จาก ${getVlanName(source)} ไปยัง ${getDestinationName(policy.destination, vlans)} service ${policy.service} และ ${natText}
+config firewall policy
+    edit 0
+        set name \"${policy.name}\"
+        set srcintf \"${getVlanName(source)}\"
+        set dstintf \"${destinationInterface}\"
+        set srcaddr \"all\"
+        set dstaddr \"all\"
+        set action ${policy.action.toLowerCase()}
+        set schedule \"always\"
+        set service \"${policy.service}\"
+        set logtraffic all
+        set nat ${getEffectiveNat(policy)}
+    next
+end`;
     })
     .join("\n\n");
 }
 
 function buildDefaultRouteCli(form: BasicFortigateForm) {
   if (form.wanConnectionType !== "static") return `# WAN mode ${form.wanConnectionType}: default route is normally received from ISP`;
-  return `config router static\n    edit 1\n        set gateway ${form.wanGateway}\n        set device \"${form.wanInterface}\"\n    next\nend`;
+  return `config router static
+    edit 1
+        set gateway ${form.wanGateway}
+        set device \"${form.wanInterface}\"
+    next
+end`;
 }
 
 function buildVpnCli(form: BasicFortigateForm) {
   if (!form.enableSslVpn) return "# SSL VPN disabled";
-  return `# Optional SSL VPN template\nconfig vpn ssl web portal\n    edit \"${form.vpnPortalName}\"\n        set tunnel-mode enable\n        set split-tunneling enable\n        set ip-pools \"${form.vpnTunnelIpPool}\"\n    next\nend\n\nconfig vpn ssl settings\n    set source-interface \"${form.wanInterface}\"\n    set source-address \"all\"\n    set default-portal \"${form.vpnPortalName}\"\n    config authentication-rule\n        edit 1\n            set groups \"${form.vpnUserGroup}\"\n            set portal \"${form.vpnPortalName}\"\n        next\n    end\nend`;
+  return `# Optional SSL VPN template
+config vpn ssl web portal
+    edit \"${form.vpnPortalName}\"
+        set tunnel-mode enable
+        set split-tunneling enable
+        set ip-pools \"${form.vpnTunnelIpPool}\"
+    next
+end
+
+config vpn ssl settings
+    set source-interface \"${form.wanInterface}\"
+    set source-address \"all\"
+    set default-portal \"${form.vpnPortalName}\"
+    config authentication-rule
+        edit 1
+            set groups \"${form.vpnUserGroup}\"
+            set portal \"${form.vpnPortalName}\"
+        next
+    end
+end`;
 }
 
 function buildConfig(project: ProjectProfile, form: BasicFortigateForm, vlans: Vlan[], policies: PolicyRule[]) {
   const syntaxProfile = getSyntaxProfile(form.fortiOsVersion);
 
-  return `# FortiRule Builder - Professional Deployment CLI\n# Project: ${project.projectName}\n# Engineer: ${project.engineerName}\n# Date: ${project.projectDate}\n# FortiGate Model: ${form.fortigateModel}\n# FortiOS Version: ${form.fortiOsVersion}\n# Syntax Profile: ${syntaxProfile.coreSyntax}\n# Version Notes: ${syntaxProfile.notes.join(" | ")}\n# ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำไปใช้กับอุปกรณ์จริง\n# Frontend only: ไม่มีการเชื่อมต่อ FortiGate จริง\n\n# === WAN ===\n${buildWanCli(form)}\n\n# === LAN / VLAN + DHCP ===\n${buildVlanAndDhcpCli(vlans, form.dnsPrimary, form.dnsSecondary)}\n\n# === DNS / Routing ===\nconfig system dns\n    set primary ${form.dnsPrimary}\n    set secondary ${form.dnsSecondary}\nend\n\n${buildDefaultRouteCli(form)}\n\n# === Firewall Policy / NAT ===\n${buildPolicyCli(policies, vlans, form.wanInterface)}\n\n# === VPN ===\n${buildVpnCli(form)}\n\n# === Deployment Checklist ===\n${firmwareChecklist.map((item, index) => `# [ ] ${index + 1}. ${item}`).join("\n")}`;
+  return `# FortiRule Builder - FortiGate Cyber City CLI
+# Project: ${project.projectName}
+# Engineer: ${project.engineerName}
+# Date: ${project.projectDate}
+# FortiGate Model: ${form.fortigateModel}
+# FortiOS Version: ${form.fortiOsVersion}
+# Syntax Profile: ${syntaxProfile.coreSyntax}
+# Version Notes: ${syntaxProfile.notes.join(" | ")}
+# ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำไปใช้กับอุปกรณ์จริง
+# Frontend only: ไม่มีการเชื่อมต่อ FortiGate จริง
+
+# === WAN / Internet Gateway ===
+${buildWanCli(form)}
+
+# === LAN / VLAN + DHCP Zones ===
+${buildVlanAndDhcpCli(vlans, form.dnsPrimary, form.dnsSecondary)}
+
+# === DNS / Routing ===
+config system dns
+    set primary ${form.dnsPrimary}
+    set secondary ${form.dnsSecondary}
+end
+
+${buildDefaultRouteCli(form)}
+
+# === Firewall Policy Roads / NAT ===
+${buildPolicyCli(policies, vlans, form.wanInterface)}
+
+# === VPN Gate ===
+${buildVpnCli(form)}
+
+# === Deployment Checklist ===
+${deploymentChecklist.map((item, index) => `# [ ] ${index + 1}. ${item}`).join("\n")}`;
 }
 
 function downloadText(filename: string, content: string, type = "text/plain;charset=utf-8") {
@@ -299,6 +393,20 @@ function renderCliLine(line: string, index: number) {
   );
 }
 
+function zoneIcon(zone: SelectedZone) {
+  return {
+    wan: "☁️",
+    "vlan-10": "🏢",
+    "vlan-20": "💼",
+    "vlan-30": "📶",
+    "vlan-40": "📹",
+    vpn: "🛡️",
+    nat: "🗼",
+    policy: "🎛️",
+    backup: "🔐",
+  }[zone];
+}
+
 export default function Home() {
   const [project, setProject] = useState<ProjectProfile>(defaultProject);
   const [form, setForm] = useState<BasicFortigateForm>(defaultForm);
@@ -307,13 +415,26 @@ export default function Home() {
   const [policies, setPolicies] = useState<PolicyRule[]>(defaultPolicies);
   const [policyDraft, setPolicyDraft] = useState<PolicyDraft>(defaultPolicyDraft);
   const [copyLabel, setCopyLabel] = useState("Copy CLI");
-  const [viewMode, setViewMode] = useState("Topology");
+  const [selectedZone, setSelectedZone] = useState<SelectedZone>("vlan-10");
+  const cliRef = useRef<HTMLDivElement>(null);
 
   const generatedConfig = useMemo(() => buildConfig(project, form, vlans, policies), [project, form, vlans, policies]);
-  const haStatus = "Standalone";
   const totalNat = policies.filter((policy) => getEffectiveNat(policy) === "enable").length;
   const completedItems = [true, true, vlans.length > 0, true, policies.length > 0, totalNat > 0, form.enableSslVpn, true].filter(Boolean).length;
-  const progress = Math.round((completedItems / firmwareChecklist.length) * 100);
+  const progress = Math.round((completedItems / deploymentChecklist.length) * 100);
+  const selectedVlan = vlans.find((vlan) => vlan.uid === selectedZone);
+
+  const cityZones = [
+    { id: "wan" as const, title: "WAN / Internet Gateway", subtitle: form.wanInterface, ip: form.wanConnectionType === "static" ? form.wanIpAddress : form.wanConnectionType.toUpperCase(), grid: "lg:col-start-2 lg:row-start-1" },
+    { id: "vlan-10" as const, title: "Server Zone", subtitle: "VLAN10 Server", ip: "192.168.10.1/24 port3", grid: "lg:col-start-1 lg:row-start-3" },
+    { id: "vlan-20" as const, title: "Client Office", subtitle: "VLAN20 Client", ip: "192.168.20.1/24 port4", grid: "lg:col-start-2 lg:row-start-4" },
+    { id: "vlan-30" as const, title: "WiFi Plaza", subtitle: "VLAN30 WiFi", ip: "192.168.30.1/24 port5", grid: "lg:col-start-3 lg:row-start-3" },
+    { id: "vlan-40" as const, title: "CCTV Tower", subtitle: "VLAN40 CCTV", ip: "192.168.40.1/24 port6", grid: "lg:col-start-4 lg:row-start-4" },
+    { id: "vpn" as const, title: "VPN Gate", subtitle: form.vpnPortalName, ip: form.vpnAllowedLanSubnet, grid: "lg:col-start-1 lg:row-start-1" },
+    { id: "nat" as const, title: "NAT / VIP Tower", subtitle: `${totalNat} NAT policies`, ip: form.wanInterface, grid: "lg:col-start-4 lg:row-start-1" },
+    { id: "policy" as const, title: "Policy Control Center", subtitle: `${policies.length} firewall roads`, ip: "ALLOW / DENY matrix", grid: "lg:col-start-1 lg:row-start-5" },
+    { id: "backup" as const, title: "Backup Vault", subtitle: "Final config archive", ip: "Checklist + report", grid: "lg:col-start-4 lg:row-start-5" },
+  ];
 
   const updateProject = (key: keyof ProjectProfile) => (event: ChangeEvent<HTMLInputElement>) => setProject((current) => ({ ...current, [key]: event.target.value }));
   const updateField = (key: keyof BasicFortigateForm) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -323,6 +444,10 @@ export default function Home() {
   const updateVlanDraft = (key: keyof VlanDraft) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const value = event.target.value;
     setVlanDraft((current) => ({ ...current, [key]: key === "allowInternet" ? value === "yes" : value }));
+  };
+  const updateVlan = (uid: string, key: keyof Vlan) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const value = event.target.value;
+    setVlans((current) => current.map((vlan) => (vlan.uid === uid ? { ...vlan, [key]: key === "allowInternet" ? value === "yes" : value } : vlan)));
   };
   const updatePolicyDraft = (key: keyof PolicyDraft) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setPolicyDraft((current) => ({ ...current, [key]: event.target.value }));
@@ -351,178 +476,290 @@ export default function Home() {
   const exportTxt = () => downloadText("fortirule-config.txt", generatedConfig);
   const exportPdf = () => downloadText("fortirule-config.pdf", generatedConfig, "application/pdf");
   const exportReport = () => downloadText("implementation-report.txt", `Implementation Report\n\n${generatedConfig}`);
+  const scrollToCli = () => cliRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
 
-  return (
-    <main className="min-h-screen bg-[#061122] text-slate-100">
-      <div className="fixed inset-y-0 left-0 z-30 hidden w-72 border-r border-sky-900/70 bg-[#07162c]/95 p-5 shadow-2xl shadow-slate-950/50 lg:block">
-        <div className="mb-8 rounded-2xl border border-cyan-300/20 bg-sky-500/10 p-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-300 font-black text-slate-950">FR</div>
+  const renderSelectedZoneEditor = () => {
+    if (selectedVlan) {
+      return (
+        <div className="space-y-4">
+          <div className="flex items-start justify-between gap-3">
             <div>
-              <h1 className="font-black text-white">FortiRule Builder</h1>
-              <p className="text-xs text-sky-200">First Implementation Assistant</p>
+              <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-300">Zone Editor</p>
+              <h3 className="text-xl font-black text-white">{getVlanName(selectedVlan)}</h3>
+              <p className="text-sm text-slate-400">คลิกอาคาร VLAN แล้วปรับ gateway, subnet และ DHCP ได้ทันที</p>
             </div>
+            <span className={`rounded-full border px-3 py-1 text-xs font-black ${statusClass("Ready")}`}>Ready</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="VLAN Name"><input className={inputClass} value={selectedVlan.name} onChange={updateVlan(selectedVlan.uid, "name")} /></Field>
+            <Field label="VLAN ID"><input className={inputClass} value={selectedVlan.vlanId} onChange={updateVlan(selectedVlan.uid, "vlanId")} /></Field>
+            <Field label="Interface"><input className={inputClass} value={selectedVlan.interfaceName} onChange={updateVlan(selectedVlan.uid, "interfaceName")} /></Field>
+            <Field label="Gateway IP"><input className={inputClass} value={selectedVlan.gatewayIp} onChange={updateVlan(selectedVlan.uid, "gatewayIp")} /></Field>
+            <Field label="Subnet Mask"><input className={inputClass} value={selectedVlan.subnetMask} onChange={updateVlan(selectedVlan.uid, "subnetMask")} /></Field>
+            <Field label="Allow Internet"><select className={inputClass} value={selectedVlan.allowInternet ? "yes" : "no"} onChange={updateVlan(selectedVlan.uid, "allowInternet")}><option value="yes">Ready - Allow Internet</option><option value="no">Warning - Internal Only</option></select></Field>
+            <Field label="DHCP Start"><input className={inputClass} value={selectedVlan.dhcpStartIp} onChange={updateVlan(selectedVlan.uid, "dhcpStartIp")} /></Field>
+            <Field label="DHCP End"><input className={inputClass} value={selectedVlan.dhcpEndIp} onChange={updateVlan(selectedVlan.uid, "dhcpEndIp")} /></Field>
           </div>
         </div>
-        <div className="space-y-6 overflow-y-auto pb-8">
-          {sidebarSections.map((section) => (
-            <div key={section.title}>
-              <p className="mb-2 px-2 text-xs font-black uppercase tracking-[0.25em] text-sky-500">{section.title}</p>
-              <div className="space-y-1">
-                {section.items.map((item) => (
-                  <a key={item} className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-300 transition hover:bg-cyan-300/10 hover:text-cyan-100" href="#dashboard">
-                    {item}<span className="text-slate-600">›</span>
-                  </a>
-                ))}
-              </div>
-            </div>
+      );
+    }
+
+    if (selectedZone === "wan") {
+      return (
+        <div className="space-y-4">
+          <div><p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-300">WAN Gateway</p><h3 className="text-xl font-black text-white">ตั้งค่า Internet Gateway</h3><p className="text-sm text-slate-400">กำหนด WAN interface และ route สำหรับออก Internet</p></div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="WAN Interface"><input className={inputClass} value={form.wanInterface} onChange={updateField("wanInterface")} /></Field>
+            <Field label="Connection Type"><select className={inputClass} value={form.wanConnectionType} onChange={updateField("wanConnectionType")}><option value="static">Static IP</option><option value="dhcp">DHCP</option><option value="pppoe">PPPoE</option></select></Field>
+            <Field label="IP Address"><input className={inputClass} value={form.wanIpAddress} onChange={updateField("wanIpAddress")} /></Field>
+            <Field label="Subnet Mask"><input className={inputClass} value={form.wanSubnetMask} onChange={updateField("wanSubnetMask")} /></Field>
+            <Field label="Gateway"><input className={inputClass} value={form.wanGateway} onChange={updateField("wanGateway")} /></Field>
+            <Field label="PPPoE Username"><input className={inputClass} value={form.pppoeUsername} onChange={updateField("pppoeUsername")} /></Field>
+          </div>
+        </div>
+      );
+    }
+
+    if (selectedZone === "vpn") {
+      return (
+        <div className="space-y-4">
+          <div><p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-300">VPN Gate</p><h3 className="text-xl font-black text-white">SSL VPN Access</h3><p className="text-sm text-slate-400">เปิด/ปิดประตู VPN และกำหนด tunnel pool</p></div>
+          <label className="flex items-center justify-between rounded-2xl border border-cyan-300/20 bg-cyan-300/5 p-4 text-sm font-bold text-cyan-100">
+            Enable SSL VPN
+            <input className="h-5 w-5 accent-cyan-300" type="checkbox" checked={form.enableSslVpn} onChange={updateField("enableSslVpn")} />
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="VPN User Group"><input className={inputClass} value={form.vpnUserGroup} onChange={updateField("vpnUserGroup")} /></Field>
+            <Field label="Tunnel IP Pool"><input className={inputClass} value={form.vpnTunnelIpPool} onChange={updateField("vpnTunnelIpPool")} /></Field>
+            <Field label="Allowed LAN Subnet"><input className={inputClass} value={form.vpnAllowedLanSubnet} onChange={updateField("vpnAllowedLanSubnet")} /></Field>
+            <Field label="Portal Name"><input className={inputClass} value={form.vpnPortalName} onChange={updateField("vpnPortalName")} /></Field>
+          </div>
+        </div>
+      );
+    }
+
+    if (selectedZone === "policy" || selectedZone === "nat") {
+      return (
+        <div className="space-y-4">
+          <div><p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-300">Policy Control Center</p><h3 className="text-xl font-black text-white">Firewall Policy Roads / NAT</h3><p className="text-sm text-slate-400">ถนนเรืองแสงบนแผนที่คือ policy ที่เชื่อม zone ต่าง ๆ</p></div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Policy Name"><input className={inputClass} value={policyDraft.name} onChange={updatePolicyDraft("name")} /></Field>
+            <Field label="Source"><select className={inputClass} value={policyDraft.sourceVlanUid} onChange={updatePolicyDraft("sourceVlanUid")}>{vlans.map((vlan) => <option key={vlan.uid} value={vlan.uid}>{getVlanName(vlan)}</option>)}</select></Field>
+            <Field label="Destination"><select className={inputClass} value={policyDraft.destination} onChange={updatePolicyDraft("destination")}><option value={internetDestination}>Internet</option>{vlans.map((vlan) => <option key={vlan.uid} value={vlan.uid}>{getVlanName(vlan)}</option>)}</select></Field>
+            <Field label="Service"><select className={inputClass} value={policyDraft.service} onChange={updatePolicyDraft("service")}>{firewallServices.map((service) => <option key={service}>{service}</option>)}</select></Field>
+            <Field label="Action"><select className={inputClass} value={policyDraft.action} onChange={updatePolicyDraft("action")}><option value="ACCEPT">ALLOW</option><option value="DENY">DENY</option></select></Field>
+            <Field label="NAT"><select className={inputClass} value={policyDraft.nat} onChange={updatePolicyDraft("nat")}><option value="AUTO">AUTO</option><option value="ENABLE">Enable</option><option value="DISABLE">Disable</option></select></Field>
+          </div>
+          <button onClick={addPolicy} className="rounded-2xl bg-cyan-300 px-4 py-3 text-sm font-black text-slate-950 shadow-lg shadow-cyan-500/25" type="button">+ Add Policy Road</button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        <div><p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-300">Backup Vault</p><h3 className="text-xl font-black text-white">Firmware / Backup Checklist</h3><p className="text-sm text-slate-400">ไม่สร้างคำสั่ง firmware จริง ใช้เป็น checklist ก่อน deploy</p></div>
+        <div className="space-y-2">
+          {deploymentChecklist.map((item, index) => (
+            <div key={item} className="flex items-center gap-3 rounded-xl border border-cyan-300/10 bg-slate-900/60 p-3 text-sm text-slate-200"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-cyan-300/10 text-xs font-black text-cyan-200">{index + 1}</span>{item}</div>
           ))}
         </div>
       </div>
+    );
+  };
 
-      <div id="dashboard" className="lg:pl-72">
-        <div className="mx-auto max-w-[1720px] space-y-4 p-4 xl:p-6">
-          <section className={`${cardClass} p-4`}>
-            <div className="grid gap-3 xl:grid-cols-[1fr_220px_180px_auto] xl:items-end">
-              <Field label="Project Name">
-                <input className={inputClass} value={project.projectName} onChange={updateProject("projectName")} />
-              </Field>
-              <Field label="Engineer">
-                <input className={inputClass} value={project.engineerName} onChange={updateProject("engineerName")} />
-              </Field>
-              <Field label="Date">
-                <input className={inputClass} type="date" value={project.projectDate} onChange={updateProject("projectDate")} />
-              </Field>
-              <div className="flex flex-wrap gap-2">
-                <button onClick={saveProject} className="rounded-xl bg-sky-500 px-3 py-2 text-sm font-bold text-white hover:bg-sky-400" type="button">Save Project</button>
-                <button className="rounded-xl border border-sky-700 px-3 py-2 text-sm font-bold text-sky-100 hover:bg-sky-900/60" type="button">Load Project</button>
-                <button onClick={exportTxt} className="rounded-xl border border-cyan-500/40 px-3 py-2 text-sm font-bold text-cyan-100 hover:bg-cyan-500/10" type="button">Export</button>
-              </div>
+  return (
+    <main className="min-h-screen overflow-x-hidden bg-[#020617] text-slate-100">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_20%_15%,rgba(34,211,238,0.24),transparent_28%),radial-gradient(circle_at_78%_8%,rgba(99,102,241,0.22),transparent_24%),linear-gradient(135deg,#020617_0%,#071633_52%,#020617_100%)]" />
+      <div className="pointer-events-none fixed inset-0 opacity-30 [background-image:linear-gradient(rgba(56,189,248,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(56,189,248,0.12)_1px,transparent_1px)] [background-size:48px_48px]" />
+
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-cyan-300/20 bg-slate-950/80 p-5 shadow-2xl shadow-cyan-950/40 backdrop-blur-xl lg:block">
+        <div className="mb-8 rounded-[1.5rem] border border-cyan-300/30 bg-cyan-300/10 p-4 shadow-lg shadow-cyan-500/10">
+          <div className="flex items-center gap-3">
+            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-cyan-300 text-lg font-black text-slate-950 shadow-lg shadow-cyan-400/40">FR</div>
+            <div>
+              <h1 className="font-black text-white">FortiRule Builder</h1>
+              <p className="text-xs text-cyan-200">Cyber City NOC</p>
             </div>
-          </section>
+          </div>
+        </div>
+        <nav className="space-y-2">
+          {sidebarItems.map((item) => (
+            <button key={item} onClick={item === "Export" ? scrollToCli : undefined} className="flex w-full items-center justify-between rounded-2xl border border-transparent px-4 py-3 text-left text-sm font-bold text-slate-300 transition hover:border-cyan-300/20 hover:bg-cyan-300/10 hover:text-cyan-100" type="button">
+              {item}<span className="text-cyan-400">◈</span>
+            </button>
+          ))}
+        </nav>
+        <div className="absolute bottom-5 left-5 right-5 rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-xs leading-5 text-amber-100">
+          ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำไปใช้กับอุปกรณ์จริง
+        </div>
+      </aside>
 
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className={`${cardClass} p-4`}>
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="relative z-10 lg:pl-64">
+        <div className="mx-auto flex min-h-screen max-w-[1800px] flex-col gap-4 p-4 xl:p-5">
+          <header className={`${panelClass} flex flex-wrap items-center justify-between gap-3 p-4`}>
+            <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_180px_160px]">
+              <Field label="Project Name"><input className={inputClass} value={project.projectName} onChange={updateProject("projectName")} /></Field>
+              <Field label="Engineer"><input className={inputClass} value={project.engineerName} onChange={updateProject("engineerName")} /></Field>
+              <Field label="Date"><input className={inputClass} type="date" value={project.projectDate} onChange={updateProject("projectDate")} /></Field>
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="FortiGate Model"><select className={inputClass} value={form.fortigateModel} onChange={updateField("fortigateModel")}>{fortigateModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></Field>
+              <Field label="FortiOS Version"><select className={inputClass} value={form.fortiOsVersion} onChange={updateField("fortiOsVersion")}>{fortiOsVersions.map((version) => <option key={version} value={version}>{version}</option>)}</select></Field>
+              <button onClick={scrollToCli} className="rounded-2xl bg-cyan-300 px-4 py-2 text-sm font-black text-slate-950 shadow-lg shadow-cyan-400/30" type="button">Generate CLI</button>
+              <button onClick={exportTxt} className="rounded-2xl border border-cyan-300/40 px-4 py-2 text-sm font-black text-cyan-100 hover:bg-cyan-300/10" type="button">Export</button>
+            </div>
+          </header>
+
+          <div className="grid flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <section className={`${panelClass} relative min-h-[740px] overflow-hidden p-4 sm:p-6`}>
+              <div className="absolute inset-x-0 bottom-0 h-1/2 bg-[linear-gradient(135deg,rgba(14,165,233,0.12)_25%,transparent_25%),linear-gradient(225deg,rgba(14,165,233,0.12)_25%,transparent_25%)] bg-[length:72px_72px]" />
+              <div className="relative z-10 mb-5 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">Device Profile</p>
-                  <h2 className="text-xl font-black text-white">FortiGate Model / FortiOS Version</h2>
+                  <p className="text-xs font-black uppercase tracking-[0.3em] text-cyan-300">FortiGate Cyber City</p>
+                  <h2 className="mt-1 text-2xl font-black text-white md:text-3xl">Network Map Command Center</h2>
+                  <p className="mt-1 text-sm text-slate-400">คลิกอาคารแต่ละ Zone เพื่อแก้ config — ถนนเรืองแสงคือ Firewall Policy</p>
                 </div>
-                <div className="rounded-xl border border-amber-300/30 bg-amber-300/10 px-4 py-2 text-sm font-semibold text-amber-100">ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำไปใช้กับอุปกรณ์จริง</div>
-              </div>
-              <div className="grid gap-3 lg:grid-cols-3">
-                <Field label="FortiGate Model">
-                  <select className={inputClass} value={form.fortigateModel} onChange={updateField("fortigateModel")}>
-                    {fortigateModels.map((model) => <option key={model} value={model}>{model}</option>)}
-                  </select>
-                </Field>
-                <Field label="FortiOS Version">
-                  <select className={inputClass} value={form.fortiOsVersion} onChange={updateField("fortiOsVersion")}>
-                    {fortiOsVersions.map((version) => <option key={version} value={version}>{version}</option>)}
-                  </select>
-                </Field>
-                <div className="rounded-2xl border border-sky-400/20 bg-sky-400/10 p-3 text-sm text-sky-100">
-                  <p className="font-bold">{getSyntaxProfile(form.fortiOsVersion).coreSyntax}</p>
-                  <p className="mt-1 text-xs text-sky-200/80">{getSyntaxProfile(form.fortiOsVersion).notes.join(" • ")}</p>
+                <div className="rounded-2xl border border-cyan-300/25 bg-cyan-300/10 px-4 py-3 text-sm text-cyan-100">
+                  {getSyntaxProfile(form.fortiOsVersion).notes.join(" • ")}
                 </div>
               </div>
-            </div>
 
-            <div className={`${cardClass} p-4`}>
-              <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">Summary</p>
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <MetricCard label="Model" value={form.fortigateModel} />
-                <MetricCard label="FortiOS" value={form.fortiOsVersion} />
-                <MetricCard label="Total VLAN" value={String(vlans.length)} tone="blue" />
-                <MetricCard label="Total Policy" value={String(policies.length)} tone="blue" />
-                <MetricCard label="Total NAT" value={String(totalNat)} tone="green" />
-                <MetricCard label="VPN Status" value={form.enableSslVpn ? "Enabled" : "Disabled"} tone={form.enableSslVpn ? "green" : "red"} />
-                <MetricCard label="HA Status" value={haStatus} />
-              </div>
-            </div>
-          </section>
+              <div className="relative z-10 grid min-h-[560px] gap-4 lg:grid-cols-4 lg:grid-rows-5">
+                <div className="pointer-events-none absolute left-[14%] right-[14%] top-[22%] hidden h-px bg-cyan-300/40 shadow-[0_0_18px_rgba(34,211,238,0.9)] lg:block" />
+                <div className="pointer-events-none absolute bottom-[24%] left-[16%] right-[16%] hidden h-px border-t border-dashed border-cyan-300/40 lg:block" />
+                <div className="pointer-events-none absolute left-1/2 top-[12%] hidden h-[72%] w-px -translate-x-1/2 border-l border-dashed border-sky-300/40 lg:block" />
+                <div className="pointer-events-none absolute left-[28%] top-[38%] hidden h-3 w-3 animate-ping rounded-full bg-cyan-300 lg:block" />
+                <div className="pointer-events-none absolute right-[30%] top-[58%] hidden h-3 w-3 animate-ping rounded-full bg-blue-300 [animation-delay:600ms] lg:block" />
 
-          <section className="grid gap-4 2xl:grid-cols-[minmax(0,1.3fr)_minmax(440px,0.7fr)]">
-            <div className={`${cardClass} p-5`}>
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">Network Topology</p>
-                  <h2 className="text-xl font-black text-white">Internet → WAN1 → FortiGate → VLANs</h2>
-                </div>
-                <div className="flex gap-2">
-                  {['Topology', 'Logical', 'Physical'].map((mode) => (
-                    <button key={mode} onClick={() => setViewMode(mode)} className={`rounded-xl px-3 py-2 text-xs font-bold ${viewMode === mode ? 'bg-cyan-300 text-slate-950' : 'border border-sky-800 text-sky-100'}`} type="button">{mode}</button>
-                  ))}
-                  <button onClick={addVlan} className="rounded-xl bg-sky-500 px-3 py-2 text-xs font-bold text-white" type="button">+ Add Device</button>
-                </div>
-              </div>
-              <div className="rounded-3xl border border-sky-900/80 bg-[#081326] p-6">
-                <div className="mx-auto flex max-w-5xl flex-col items-center gap-4">
-                  <div className="rounded-2xl border border-cyan-300/30 bg-cyan-300/10 px-6 py-3 text-center shadow-lg shadow-cyan-950/30">🌐<div className="text-sm font-bold text-cyan-100">Internet</div></div>
-                  <div className="h-8 w-px bg-cyan-400/50" />
-                  <div className="rounded-2xl border border-sky-400/40 bg-sky-400/10 px-6 py-3 text-center"><p className="text-sm font-black text-sky-100">WAN1</p><p className="text-xs text-slate-400">{form.wanIpAddress}</p></div>
-                  <div className="h-8 w-px bg-cyan-400/50" />
-                  <div className="rounded-[2rem] border border-cyan-300/40 bg-gradient-to-br from-sky-500/30 to-cyan-300/10 px-10 py-6 text-center shadow-2xl shadow-cyan-950/40">
-                    <p className="text-3xl">🛡️</p><p className="text-lg font-black text-white">FortiGate {form.fortigateModel}</p><p className="text-xs text-cyan-100">FortiOS {form.fortiOsVersion} • {haStatus}</p>
-                  </div>
-                  <div className="grid w-full gap-3 md:grid-cols-2 xl:grid-cols-4">
-                    {vlans.map((vlan) => (
-                      <div key={vlan.uid} className="rounded-2xl border border-sky-700/70 bg-slate-950/60 p-4 text-center">
-                        <p className="font-black text-cyan-100">VLAN{vlan.vlanId} {vlan.name}</p>
-                        <p className="text-sm text-slate-300">{vlan.gatewayIp}/{cidrFromMask(vlan.subnetMask)}</p>
-                        <p className="text-xs text-slate-500">{vlan.interfaceName}</p>
+                {cityZones.map((zone) => {
+                  const status = getZoneStatus(zone.id, form, vlans, policies);
+                  const isSelected = selectedZone === zone.id;
+                  return (
+                    <button key={zone.id} onClick={() => setSelectedZone(zone.id)} className={`${buildingBaseClass} ${zone.grid} ${isSelected ? "border-cyan-200 bg-cyan-300/15 shadow-cyan-400/30" : ""}`} type="button">
+                      <div className="absolute inset-x-3 bottom-0 h-8 rounded-t-2xl bg-gradient-to-t from-cyan-300/20 to-transparent blur-sm" />
+                      <div className="absolute right-4 top-4 h-10 w-10 rounded-full bg-cyan-300/10 blur-xl" />
+                      <div className="relative z-10 flex h-full flex-col justify-between gap-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <span className="text-3xl drop-shadow-[0_0_12px_rgba(34,211,238,0.8)]">{zoneIcon(zone.id)}</span>
+                          <span className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase ${statusClass(status)}`}>{status}</span>
+                        </div>
+                        <div>
+                          <p className="font-black text-white">{zone.title}</p>
+                          <p className="text-xs font-bold text-cyan-200">{zone.subtitle}</p>
+                          <p className="mt-2 text-xs text-slate-400">{zone.ip}</p>
+                        </div>
                       </div>
-                    ))}
-                  </div>
+                    </button>
+                  );
+                })}
+
+                <div className="lg:col-start-2 lg:col-span-2 lg:row-start-2 lg:row-span-2">
+                  <button onClick={() => setSelectedZone("policy")} className="relative h-full min-h-44 w-full overflow-hidden rounded-[2rem] border border-cyan-200/50 bg-gradient-to-br from-cyan-400/20 via-blue-500/20 to-indigo-600/20 p-6 text-left shadow-2xl shadow-cyan-500/30" type="button">
+                    <div className="absolute inset-4 rounded-[1.5rem] border border-cyan-200/20" />
+                    <div className="absolute -right-8 -top-10 h-36 w-36 rounded-full bg-cyan-300/20 blur-3xl" />
+                    <div className="relative z-10 flex h-full flex-col justify-between">
+                      <div className="flex items-center justify-between">
+                        <span className="text-5xl">🏙️</span>
+                        <span className="rounded-full border border-emerald-300/40 bg-emerald-300/10 px-3 py-1 text-xs font-black text-emerald-200">HQ Online</span>
+                      </div>
+                      <div>
+                        <h3 className="text-3xl font-black text-white">FortiGate HQ</h3>
+                        <p className="text-sm text-cyan-100">{form.fortigateModel} / FortiOS {form.fortiOsVersion}</p>
+                        <p className="mt-2 text-xs text-slate-300">ศูนย์กลางควบคุม traffic, NAT, VPN และ policy ทั้งเมือง</p>
+                      </div>
+                    </div>
+                  </button>
                 </div>
               </div>
-            </div>
+            </section>
 
-            <div className={`${cardClass} p-5`}>
-              <div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-black">Deployment Checklist</h2><span className="text-2xl font-black text-cyan-200">{progress}%</span></div>
-              <div className="mb-4 h-3 rounded-full bg-slate-950"><div className="h-3 rounded-full bg-gradient-to-r from-sky-500 to-cyan-300" style={{ width: `${progress}%` }} /></div>
-              <div className="space-y-2">
-                {firmwareChecklist.map((item, index) => {
-                  const done = index < completedItems;
-                  return <div key={item} className="flex items-center gap-3 rounded-xl border border-sky-900/70 bg-slate-950/45 p-3 text-sm"><span className={`h-3 w-3 rounded-full ${done ? 'bg-emerald-400' : 'bg-slate-600'}`} />{item}</div>;
-                })}
+            <aside className="space-y-4">
+              <section className={`${panelClass} p-4`}>
+                <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">Summary</p>
+                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                  {[['Model', form.fortigateModel], ['FortiOS', form.fortiOsVersion], ['Total VLAN', String(vlans.length)], ['Total Policy', String(policies.length)], ['NAT Status', `${totalNat} Enable`], ['VPN Status', form.enableSslVpn ? 'Ready' : 'Disabled']].map(([label, value]) => (
+                    <div key={label} className="rounded-2xl border border-cyan-300/15 bg-cyan-300/5 p-3"><p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">{label}</p><p className="mt-1 font-black text-cyan-100">{value}</p></div>
+                  ))}
+                </div>
+                <div className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-300/10 p-3 text-xs leading-5 text-amber-100">ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำ CLI ไปใช้งานจริง</div>
+              </section>
+
+              <section className={`${panelClass} p-4`}>
+                <div className="flex items-center justify-between"><p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">Deployment</p><span className="font-black text-cyan-100">{progress}%</span></div>
+                <div className="mt-3 h-2 rounded-full bg-slate-800"><div className="h-2 rounded-full bg-gradient-to-r from-cyan-300 to-blue-500" style={{ width: `${progress}%` }} /></div>
+                <div className="mt-4 space-y-2">
+                  {deploymentChecklist.map((item, index) => (
+                    <div key={item} className="flex items-center gap-2 text-xs text-slate-300"><span className={`h-2 w-2 rounded-full ${index < completedItems ? "bg-emerald-300" : "bg-slate-600"}`} />{item}</div>
+                  ))}
+                </div>
+              </section>
+
+              <section className={`${panelClass} p-4`}>{renderSelectedZoneEditor()}</section>
+            </aside>
+          </div>
+
+          <section className={`${panelClass} overflow-hidden`}>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cyan-300/20 p-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">Zone Inventory</p>
+                <h2 className="text-lg font-black text-white">VLAN Configuration Grid</h2>
               </div>
+              <button onClick={addVlan} className="rounded-2xl bg-cyan-300 px-4 py-2 text-sm font-black text-slate-950 shadow-lg shadow-cyan-400/25" type="button">+ Add VLAN Building</button>
+            </div>
+            <div className="grid gap-3 p-4 md:grid-cols-4">
+              <Field label="VLAN ID"><input className={inputClass} value={vlanDraft.vlanId} onChange={updateVlanDraft("vlanId")} /></Field>
+              <Field label="Name"><input className={inputClass} value={vlanDraft.name} onChange={updateVlanDraft("name")} /></Field>
+              <Field label="Interface"><input className={inputClass} value={vlanDraft.interfaceName} onChange={updateVlanDraft("interfaceName")} /></Field>
+              <Field label="Gateway"><input className={inputClass} value={vlanDraft.gatewayIp} onChange={updateVlanDraft("gatewayIp")} /></Field>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-950/80 text-xs uppercase tracking-[0.15em] text-cyan-200/70"><tr><th className="px-4 py-3">ID</th><th>Name</th><th>Interface</th><th>Gateway</th><th>Subnet</th><th>DHCP</th><th>Action</th></tr></thead>
+                <tbody className="divide-y divide-cyan-300/10">
+                  {vlans.map((vlan) => (
+                    <tr key={vlan.uid} className="hover:bg-cyan-300/5"><td className="px-4 py-3 font-black text-cyan-100">{vlan.vlanId}</td><td>{vlan.name}</td><td>{vlan.interfaceName}</td><td>{vlan.gatewayIp}</td><td>{vlan.subnetMask}</td><td>{vlan.dhcpStartIp} - {vlan.dhcpEndIp}</td><td><button onClick={() => setVlans((current) => current.filter((item) => item.uid !== vlan.uid))} className="text-red-300" type="button">Delete</button></td></tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </section>
 
-          <section className="grid gap-4 xl:grid-cols-2">
-            <div className={`${cardClass} overflow-hidden`}>
-              <div className="flex items-center justify-between border-b border-sky-900/70 p-4"><h2 className="font-black text-white">VLAN Configuration</h2><button onClick={addVlan} className="rounded-xl bg-cyan-300 px-3 py-2 text-xs font-black text-slate-950" type="button">+ Add VLAN</button></div>
-              <div className="grid gap-3 p-4 md:grid-cols-3">
-                <Field label="ID"><input className={inputClass} value={vlanDraft.vlanId} onChange={updateVlanDraft("vlanId")} /></Field>
-                <Field label="Name"><input className={inputClass} value={vlanDraft.name} onChange={updateVlanDraft("name")} /></Field>
-                <Field label="Interface"><input className={inputClass} value={vlanDraft.interfaceName} onChange={updateVlanDraft("interfaceName")} /></Field>
-                <Field label="Gateway"><input className={inputClass} value={vlanDraft.gatewayIp} onChange={updateVlanDraft("gatewayIp")} /></Field>
-                <Field label="Subnet"><input className={inputClass} value={vlanDraft.subnetMask} onChange={updateVlanDraft("subnetMask")} /></Field>
-                <Field label="Internet"><select className={inputClass} value={vlanDraft.allowInternet ? "yes" : "no"} onChange={updateVlanDraft("allowInternet")}><option value="yes">Allow</option><option value="no">Block</option></select></Field>
+          <section className={`${panelClass} overflow-hidden`}>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cyan-300/20 p-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">Policy Roads</p>
+                <h2 className="text-lg font-black text-white">Firewall Policy Matrix</h2>
               </div>
-              <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-950/70 text-slate-400"><tr><th className="px-4 py-3">ID</th><th>Name</th><th>Interface</th><th>Gateway</th><th>Subnet</th><th>Action</th></tr></thead><tbody className="divide-y divide-sky-950/70">{vlans.map((vlan) => <tr key={vlan.uid}><td className="px-4 py-3 font-bold text-cyan-100">{vlan.vlanId}</td><td>{vlan.name}</td><td>{vlan.interfaceName}</td><td>{vlan.gatewayIp}</td><td>{vlan.subnetMask}</td><td><button onClick={() => setVlans((current) => current.filter((item) => item.uid !== vlan.uid))} className="text-red-300" type="button">Delete</button></td></tr>)}</tbody></table></div>
+              <button onClick={() => setSelectedZone("policy")} className="rounded-2xl border border-cyan-300/40 px-4 py-2 text-sm font-black text-cyan-100 hover:bg-cyan-300/10" type="button">Open Policy Control</button>
             </div>
-
-            <div className={`${cardClass} overflow-hidden`}>
-              <div className="flex items-center justify-between border-b border-sky-900/70 p-4"><h2 className="font-black text-white">Policy Matrix</h2><button onClick={addPolicy} className="rounded-xl bg-cyan-300 px-3 py-2 text-xs font-black text-slate-950" type="button">+ Add Policy</button></div>
-              <div className="grid gap-3 p-4 md:grid-cols-3">
-                <Field label="Source"><select className={inputClass} value={policyDraft.sourceVlanUid} onChange={updatePolicyDraft("sourceVlanUid")}>{vlans.map((vlan) => <option key={vlan.uid} value={vlan.uid}>{getVlanName(vlan)}</option>)}</select></Field>
-                <Field label="Destination"><select className={inputClass} value={policyDraft.destination} onChange={updatePolicyDraft("destination")}><option value={internetDestination}>Internet</option>{vlans.map((vlan) => <option key={vlan.uid} value={vlan.uid}>{getVlanName(vlan)}</option>)}</select></Field>
-                <Field label="Service"><select className={inputClass} value={policyDraft.service} onChange={updatePolicyDraft("service")}>{firewallServices.map((service) => <option key={service}>{service}</option>)}</select></Field>
-                <Field label="Action"><select className={inputClass} value={policyDraft.action} onChange={updatePolicyDraft("action")}><option value="ACCEPT">ALLOW</option><option value="DENY">DENY</option></select></Field>
-                <Field label="NAT"><select className={inputClass} value={policyDraft.nat} onChange={updatePolicyDraft("nat")}><option value="AUTO">AUTO</option><option value="ENABLE">Enable</option><option value="DISABLE">Disable</option></select></Field>
-              </div>
-              <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-950/70 text-slate-400"><tr><th className="px-4 py-3">ID</th><th>Source</th><th>Destination</th><th>Service</th><th>Action</th><th>NAT</th><th>Status</th></tr></thead><tbody className="divide-y divide-sky-950/70">{policies.map((policy, index) => <tr key={policy.uid}><td className="px-4 py-3">{index + 1}</td><td>{getVlanName(vlans.find((vlan) => vlan.uid === policy.sourceVlanUid))}</td><td>{getDestinationName(policy.destination, vlans)}</td><td>{policy.service}</td><td><span className={`rounded-full px-2 py-1 text-xs font-bold ${policy.action === 'ACCEPT' ? 'bg-emerald-400/10 text-emerald-300' : 'bg-red-400/10 text-red-300'}`}>{policy.action === 'ACCEPT' ? 'ALLOW' : 'DENY'}</span></td><td><span className={`rounded-full px-2 py-1 text-xs font-bold ${getEffectiveNat(policy) === 'enable' ? 'bg-emerald-400/10 text-emerald-300' : 'bg-red-400/10 text-red-300'}`}>{getNatLabel(policy)}</span></td><td><span className="text-emerald-300">Ready</span></td></tr>)}</tbody></table></div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-950/80 text-xs uppercase tracking-[0.15em] text-cyan-200/70"><tr><th className="px-4 py-3">ID</th><th>Source</th><th>Destination</th><th>Service</th><th>Action</th><th>NAT</th><th>Status</th></tr></thead>
+                <tbody className="divide-y divide-cyan-300/10">
+                  {policies.map((policy, index) => (
+                    <tr key={policy.uid} className="hover:bg-cyan-300/5"><td className="px-4 py-3">{index + 1}</td><td>{getVlanName(vlans.find((vlan) => vlan.uid === policy.sourceVlanUid))}</td><td>{getDestinationName(policy.destination, vlans)}</td><td>{policy.service}</td><td><span className={`rounded-full px-2 py-1 text-xs font-bold ${policy.action === "ACCEPT" ? "bg-emerald-400/10 text-emerald-300" : "bg-red-400/10 text-red-300"}`}>{policy.action === "ACCEPT" ? "ALLOW" : "DENY"}</span></td><td><span className={`rounded-full px-2 py-1 text-xs font-bold ${getEffectiveNat(policy) === "enable" ? "bg-emerald-400/10 text-emerald-300" : "bg-red-400/10 text-red-300"}`}>{getNatLabel(policy)}</span></td><td><span className="text-emerald-300">Ready</span></td></tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </section>
 
-          <section className={`${cardClass} overflow-hidden`}>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sky-900/70 p-4">
-              <div><p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">Generated CLI</p><h2 className="text-xl font-black text-white">FortiGate Configuration Terminal</h2></div>
-              <div className="flex flex-wrap gap-2"><button onClick={copyConfig} className="rounded-xl bg-cyan-300 px-3 py-2 text-sm font-bold text-slate-950" type="button">{copyLabel}</button><button onClick={exportTxt} className="rounded-xl border border-sky-700 px-3 py-2 text-sm font-bold" type="button">Download TXT</button><button onClick={exportPdf} className="rounded-xl border border-sky-700 px-3 py-2 text-sm font-bold" type="button">Download PDF</button><button onClick={exportReport} className="rounded-xl border border-sky-700 px-3 py-2 text-sm font-bold" type="button">Implementation Report</button></div>
+          <section ref={cliRef} className={`${panelClass} overflow-hidden`}>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cyan-300/20 p-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">Generated CLI Terminal</p>
+                <h2 className="text-xl font-black text-white">FortiGate Cyber City Config Output</h2>
+                <p className="text-xs text-amber-100">ตรวจสอบค่าอีกครั้งก่อนนำไปใช้กับอุปกรณ์จริง</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={copyConfig} className="rounded-2xl bg-cyan-300 px-4 py-2 text-sm font-black text-slate-950" type="button">{copyLabel}</button>
+                <button onClick={exportTxt} className="rounded-2xl border border-cyan-300/40 px-4 py-2 text-sm font-black text-cyan-100" type="button">Download TXT</button>
+                <button onClick={exportPdf} className="rounded-2xl border border-cyan-300/40 px-4 py-2 text-sm font-black text-cyan-100" type="button">Download PDF</button>
+                <button onClick={exportReport} className="rounded-2xl border border-cyan-300/40 px-4 py-2 text-sm font-black text-cyan-100" type="button">Implementation Report</button>
+                <button onClick={saveProject} className="rounded-2xl border border-blue-300/40 px-4 py-2 text-sm font-black text-blue-100" type="button">Save Project</button>
+              </div>
             </div>
-            <pre className="max-h-[560px] overflow-auto bg-[#020817] p-5 font-mono text-sm leading-6">{generatedConfig.split("\n").map(renderCliLine)}</pre>
+            <pre className="max-h-[520px] overflow-auto bg-[#010712] p-5 font-mono text-sm leading-6 shadow-inner shadow-cyan-950/40">{generatedConfig.split("\n").map(renderCliLine)}</pre>
           </section>
         </div>
       </div>
