@@ -98,15 +98,19 @@ const defaultNat: NatRule = {
 };
 
 const modules = [
-  { label: "WAN", desc: "Internet uplink", icon: "🌐" },
-  { label: "LAN", desc: "Internal gateway", icon: "🧩" },
-  { label: "VLAN", desc: "Network segment", icon: "🕸️" },
-  { label: "DHCP", desc: "Client IP service", icon: "📡" },
-  { label: "Policy", desc: "Traffic control", icon: "🛡️" },
-  { label: "NAT", desc: "Internet access", icon: "🔁" },
-  { label: "VPN", desc: "Optional remote", icon: "🔐" },
-  { label: "Export", desc: "CLI / TXT", icon: "⬇️" },
+  { label: "WAN", desc: "Internet uplink", icon: "🌐", target: "core-network" },
+  { label: "LAN", desc: "Internal gateway", icon: "🧩", target: "core-network" },
+  { label: "VLAN", desc: "Network segment", icon: "🕸️", target: "core-network" },
+  { label: "DHCP", desc: "Client IP service", icon: "📡", target: "dhcp-server" },
+  { label: "Policy", desc: "Traffic control", icon: "🛡️", target: "firewall-policy" },
+  { label: "NAT", desc: "Internet access", icon: "🔁", target: "vip-nat" },
+  { label: "VPN", desc: "Optional remote", icon: "🔐", target: "summary" },
+  { label: "Export", desc: "CLI / TXT", icon: "⬇️", target: "terminal-output" },
 ];
+
+function scrollToSection(target: string) {
+  document.getElementById(target)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
@@ -118,9 +122,9 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
-function Card({ title, description, badge, children }: { title: string; description: string; badge?: string; children: ReactNode }) {
+function Card({ id, title, description, badge, children }: { id?: string; title: string; description: string; badge?: string; children: ReactNode }) {
   return (
-    <section className="rounded-[1.7rem] border border-cyan-300/15 bg-slate-950/65 p-5 shadow-2xl shadow-slate-950/35 backdrop-blur">
+    <section id={id} className="scroll-mt-6 rounded-[1.7rem] border border-cyan-300/15 bg-slate-950/65 p-5 shadow-2xl shadow-slate-950/35 backdrop-blur">
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-xl font-black text-white">{title}</h2>
@@ -258,17 +262,24 @@ export default function Home() {
 
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
           {modules.map((module) => (
-            <div key={module.label} className="rounded-2xl border border-cyan-300/15 bg-slate-950/55 p-4 shadow-xl shadow-slate-950/20 transition hover:-translate-y-0.5 hover:border-cyan-300/30 hover:bg-cyan-300/10">
-              <div className="mb-3 text-2xl">{module.icon}</div>
+            <button
+              key={module.label}
+              type="button"
+              onClick={() => scrollToSection(module.target)}
+              className="group rounded-2xl border border-cyan-300/15 bg-slate-950/55 p-4 text-left shadow-xl shadow-slate-950/20 outline-none transition hover:-translate-y-0.5 hover:border-cyan-300/50 hover:bg-cyan-300/10 focus:border-cyan-200 focus:ring-2 focus:ring-cyan-300/30 active:scale-[0.98]"
+              aria-label={`ไปยังส่วน ${module.label}`}
+            >
+              <div className="mb-3 text-2xl transition group-hover:scale-110">{module.icon}</div>
               <p className="font-black text-white">{module.label}</p>
               <p className="mt-1 text-xs text-slate-400">{module.desc}</p>
-            </div>
+              <p className="mt-3 text-[0.65rem] font-bold uppercase tracking-[0.22em] text-cyan-200/70 opacity-0 transition group-hover:opacity-100">Open section</p>
+            </button>
           ))}
         </section>
 
         <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
           <div className="space-y-6">
-            <Card title="WAN / LAN / VLAN" description="กำหนด Interface หลักของหน้างาน และสร้าง VLAN Interface สำหรับ FortiGate" badge="Core Network">
+            <Card id="core-network" title="WAN / LAN / VLAN" description="กำหนด Interface หลักของหน้างาน และสร้าง VLAN Interface สำหรับ FortiGate" badge="Core Network">
               <Field label="ชื่อ VLAN Interface" hint="เช่น VLAN10_USERS หรือ VLAN20_CLIENT">
                 <input className={inputClass} value={vlan.name} onChange={updateVlan("name")} />
               </Field>
@@ -289,7 +300,7 @@ export default function Home() {
               </Field>
             </Card>
 
-            <Card title="DHCP Server" description="กำหนดช่วงแจก IP ให้เครื่องลูกข่ายใน VLAN ที่เลือก" badge={dhcp.enabled ? "Enabled" : "Disabled"}>
+            <Card id="dhcp-server" title="DHCP Server" description="กำหนดช่วงแจก IP ให้เครื่องลูกข่ายใน VLAN ที่เลือก" badge={dhcp.enabled ? "Enabled" : "Disabled"}>
               <label className="flex items-center gap-3 rounded-2xl border border-cyan-300/15 bg-slate-950/60 px-4 py-3 md:col-span-2">
                 <input type="checkbox" checked={dhcp.enabled} onChange={updateDhcp("enabled")} className="h-5 w-5 accent-cyan-300" />
                 <span className="font-bold text-slate-100">เปิดใช้งาน DHCP Server</span>
@@ -317,7 +328,7 @@ export default function Home() {
               </Field>
             </Card>
 
-            <Card title="Firewall Policy / NAT" description="กำหนด Source, Destination, Service และ NAT สำหรับออก Internet หรือเปิดบริการ" badge="Traffic Rule">
+            <Card id="firewall-policy" title="Firewall Policy / NAT" description="กำหนด Source, Destination, Service และ NAT สำหรับออก Internet หรือเปิดบริการ" badge="Traffic Rule">
               <Field label="ชื่อ Policy">
                 <input className={inputClass} value={policy.name} onChange={updatePolicy("name")} />
               </Field>
@@ -355,7 +366,7 @@ export default function Home() {
               </label>
             </Card>
 
-            <Card title="VIP / Port Forward" description="ใช้สำหรับ Publish Server จาก Internet เข้ามายัง IP ภายใน" badge={nat.mode === "vip" ? "VIP Mode" : "Outbound NAT"}>
+            <Card id="vip-nat" title="VIP / Port Forward" description="ใช้สำหรับ Publish Server จาก Internet เข้ามายัง IP ภายใน" badge={nat.mode === "vip" ? "VIP Mode" : "Outbound NAT"}>
               <Field label="ประเภท NAT">
                 <select className={inputClass} value={nat.mode} onChange={updateNat("mode")}>
                   <option value="vip">VIP / Port Forward</option>
@@ -390,7 +401,7 @@ export default function Home() {
           </div>
 
           <aside className="space-y-6 xl:sticky xl:top-6 xl:self-start">
-            <section className="rounded-[1.7rem] border border-cyan-300/15 bg-slate-950/75 p-5 shadow-2xl shadow-slate-950/45 backdrop-blur">
+            <section id="summary" className="scroll-mt-6 rounded-[1.7rem] border border-cyan-300/15 bg-slate-950/75 p-5 shadow-2xl shadow-slate-950/45 backdrop-blur">
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <p className="text-[0.68rem] font-black uppercase tracking-[0.3em] text-cyan-200">Summary</p>
@@ -422,7 +433,7 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="rounded-[1.7rem] border border-cyan-300/15 bg-slate-950/85 p-5 shadow-2xl shadow-slate-950/45 backdrop-blur">
+            <section id="terminal-output" className="scroll-mt-6 rounded-[1.7rem] border border-cyan-300/15 bg-slate-950/85 p-5 shadow-2xl shadow-slate-950/45 backdrop-blur">
               <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-[0.68rem] font-black uppercase tracking-[0.3em] text-cyan-200">Terminal Output</p>
