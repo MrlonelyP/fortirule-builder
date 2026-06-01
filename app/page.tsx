@@ -5,6 +5,15 @@ import { ChangeEvent, useMemo, useState } from "react";
 type WanConnectionType = "static" | "dhcp" | "pppoe";
 type FortiOsVersion = "7.0" | "7.2" | "7.4" | "7.6";
 type FortiGateModel = "40F" | "60F" | "70F" | "70G" | "80F" | "90G" | "100F" | "100G" | "200F" | "400F" | "Custom";
+type Service = "ALL" | "HTTP" | "HTTPS" | "DNS" | "RDP" | "PING";
+type Action = "ACCEPT" | "DENY";
+type NatMode = "AUTO" | "ENABLE" | "DISABLE";
+
+type ProjectProfile = {
+  projectName: string;
+  engineerName: string;
+  projectDate: string;
+};
 
 type BasicFortigateForm = {
   fortigateModel: FortiGateModel;
@@ -31,12 +40,6 @@ type BasicFortigateForm = {
   vpnPortalName: string;
 };
 
-type StepItem = {
-  id: string;
-  label: string;
-  detail: string;
-};
-
 type Vlan = {
   uid: string;
   name: string;
@@ -48,10 +51,6 @@ type Vlan = {
   dhcpEndIp: string;
   allowInternet: boolean;
 };
-
-type Service = "ALL" | "HTTP" | "HTTPS" | "DNS" | "RDP" | "PING";
-type Action = "ACCEPT" | "DENY";
-type NatMode = "AUTO" | "ENABLE" | "DISABLE";
 
 type PolicyRule = {
   uid: string;
@@ -67,12 +66,20 @@ type VlanDraft = Omit<Vlan, "uid">;
 type PolicyDraft = Omit<PolicyRule, "uid">;
 
 const inputClass =
-  "w-full rounded-2xl border border-slate-700/80 bg-slate-950/80 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 hover:border-cyan-500/50 focus:border-cyan-300 focus:ring-4 focus:ring-cyan-300/10";
-const labelClass = "mb-2 block text-sm font-semibold text-slate-100";
-const helperClass = "mt-2 block text-xs leading-5 text-slate-400";
+  "w-full rounded-xl border border-sky-900/80 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20";
+const labelClass = "mb-1 block text-xs font-bold uppercase tracking-[0.14em] text-sky-200/80";
+const cardClass = "rounded-2xl border border-sky-900/70 bg-[#0b1730]/90 shadow-xl shadow-slate-950/30 ring-1 ring-cyan-300/5";
+
 const internetDestination = "internet";
 const fortigateModels: FortiGateModel[] = ["40F", "60F", "70F", "70G", "80F", "90G", "100F", "100G", "200F", "400F", "Custom"];
+const fortiOsVersions: FortiOsVersion[] = ["7.0", "7.2", "7.4", "7.6"];
 const firewallServices: Service[] = ["ALL", "HTTP", "HTTPS", "DNS", "RDP", "PING"];
+
+const defaultProject: ProjectProfile = {
+  projectName: "ABC Company - Head Office",
+  engineerName: "Network Engineer",
+  projectDate: new Date().toISOString().slice(0, 10),
+};
 
 const defaultForm: BasicFortigateForm = {
   fortigateModel: "60F",
@@ -100,89 +107,52 @@ const defaultForm: BasicFortigateForm = {
 };
 
 const defaultVlans: Vlan[] = [
-  {
-    uid: "vlan-10",
-    name: "VLAN10_USERS",
-    vlanId: "10",
-    interfaceName: "port2",
-    gatewayIp: "192.168.10.1",
-    subnetMask: "255.255.255.0",
-    dhcpStartIp: "192.168.10.100",
-    dhcpEndIp: "192.168.10.200",
-    allowInternet: true,
-  },
-  {
-    uid: "vlan-20",
-    name: "VLAN20_SERVERS",
-    vlanId: "20",
-    interfaceName: "port2",
-    gatewayIp: "192.168.20.1",
-    subnetMask: "255.255.255.0",
-    dhcpStartIp: "192.168.20.50",
-    dhcpEndIp: "192.168.20.120",
-    allowInternet: false,
-  },
+  { uid: "vlan-10", name: "Server", vlanId: "10", interfaceName: "port3", gatewayIp: "192.168.10.1", subnetMask: "255.255.255.0", dhcpStartIp: "192.168.10.100", dhcpEndIp: "192.168.10.200", allowInternet: true },
+  { uid: "vlan-20", name: "Client", vlanId: "20", interfaceName: "port4", gatewayIp: "192.168.20.1", subnetMask: "255.255.255.0", dhcpStartIp: "192.168.20.100", dhcpEndIp: "192.168.20.220", allowInternet: true },
+  { uid: "vlan-30", name: "WiFi", vlanId: "30", interfaceName: "port5", gatewayIp: "192.168.30.1", subnetMask: "255.255.255.0", dhcpStartIp: "192.168.30.50", dhcpEndIp: "192.168.30.220", allowInternet: true },
+  { uid: "vlan-40", name: "CCTV", vlanId: "40", interfaceName: "port6", gatewayIp: "192.168.40.1", subnetMask: "255.255.255.0", dhcpStartIp: "192.168.40.50", dhcpEndIp: "192.168.40.180", allowInternet: false },
 ];
 
 const defaultVlanDraft: VlanDraft = {
-  name: "VLAN30_GUEST",
-  vlanId: "30",
-  interfaceName: "port2",
-  gatewayIp: "192.168.30.1",
+  name: "Guest",
+  vlanId: "50",
+  interfaceName: "port7",
+  gatewayIp: "192.168.50.1",
   subnetMask: "255.255.255.0",
-  dhcpStartIp: "192.168.30.100",
-  dhcpEndIp: "192.168.30.200",
+  dhcpStartIp: "192.168.50.100",
+  dhcpEndIp: "192.168.50.200",
   allowInternet: true,
 };
 
 const defaultPolicies: PolicyRule[] = [
-  {
-    uid: "policy-vlan10-internet",
-    name: "Users ออกอินเทอร์เน็ต",
-    sourceVlanUid: "vlan-10",
-    destination: internetDestination,
-    service: "ALL",
-    action: "ACCEPT",
-    nat: "AUTO",
-  },
+  { uid: "policy-client-internet", name: "Client_to_Internet", sourceVlanUid: "vlan-20", destination: internetDestination, service: "ALL", action: "ACCEPT", nat: "AUTO" },
+  { uid: "policy-cctv-server", name: "CCTV_to_Server", sourceVlanUid: "vlan-40", destination: "vlan-10", service: "HTTPS", action: "DENY", nat: "DISABLE" },
 ];
 
 const defaultPolicyDraft: PolicyDraft = {
-  name: "นโยบายใหม่",
-  sourceVlanUid: "vlan-10",
+  name: "New_Policy",
+  sourceVlanUid: "vlan-20",
   destination: internetDestination,
   service: "ALL",
   action: "ACCEPT",
   nat: "AUTO",
 };
 
-const stepNavigation: StepItem[] = [
-  { id: "compatibility", label: "Profile", detail: "Model + FortiOS" },
-  { id: "wan", label: "1 WAN", detail: "Internet uplink" },
-  { id: "lan", label: "2 LAN", detail: "Internal gateway" },
-  { id: "vlans", label: "3 VLAN", detail: "Multi VLAN + DHCP" },
-  { id: "dhcp", label: "4 DHCP", detail: "Client IP service" },
-  { id: "policy", label: "5 Firewall Policy", detail: "Policy Builder" },
-  { id: "nat-dns", label: "6 NAT / DNS / Gateway", detail: "Route and NAT" },
-  { id: "vpn", label: "7 VPN", detail: "Optional SSL VPN" },
-  { id: "checklist", label: "8 Checklist", detail: "Firmware and testing" },
-  { id: "export", label: "9 Export Config", detail: "Copy or .txt" },
-];
-
 const firmwareChecklist = [
-  "Backup config before firmware update",
-  "Check Fortinet upgrade path",
-  "Upgrade to suitable stable version",
-  "Reboot and verify system status",
-  "Backup final config after implementation",
+  "Firmware Check",
+  "WAN Configuration",
+  "LAN / VLAN Configuration",
+  "DHCP Configuration",
+  "Firewall Policy",
+  "NAT Configuration",
+  "VPN Configuration",
+  "Backup Configuration",
 ];
 
-const testingChecklist = [
-  "ทดสอบการออกอินเทอร์เน็ตจากเครื่อง Client",
-  "ทดสอบการ Resolve DNS เช่น เปิดเว็บไซต์หรือ nslookup",
-  "ทดสอบ Ping ไปยัง Gateway ของ LAN",
-  "ตรวจสอบ Log ของ Policy บน FortiGate ว่ามี Traffic ผ่านถูกต้อง",
-  "Backup Final Config หลังทดสอบผ่านทั้งหมด",
+const sidebarSections = [
+  { title: "Menu", items: ["Dashboard", "WAN", "LAN / VLAN", "DHCP", "Firewall Policy", "NAT", "VPN", "Routing", "System"] },
+  { title: "Tools", items: ["IP Calculator", "Network Diagram", "Templates"] },
+  { title: "Deployment", items: ["Checklist", "Backup / Restore"] },
 ];
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
@@ -190,78 +160,46 @@ function Field({ label, children, hint }: { label: string; children: React.React
     <label className="block">
       <span className={labelClass}>{label}</span>
       {children}
-      {hint ? <span className={helperClass}>{hint}</span> : null}
+      {hint ? <span className="mt-1 block text-xs leading-5 text-slate-400">{hint}</span> : null}
     </label>
   );
 }
 
-function ModuleCard({ id, icon, title, description, children }: { id: string; icon: string; title: string; description: string; children: React.ReactNode }) {
-  return (
-    <section id={id} className="scroll-mt-6 rounded-[2rem] border border-slate-700/70 bg-slate-900/75 p-5 shadow-2xl shadow-slate-950/40 ring-1 ring-white/5 backdrop-blur md:p-6">
-      <div className="mb-6 flex gap-4">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-cyan-300/30 bg-cyan-300/10 text-2xl shadow-lg shadow-cyan-950/40">
-          {icon}
-        </div>
-        <div>
-          <h2 className="text-xl font-black text-white">{title}</h2>
-          <p className="mt-1 text-sm leading-6 text-slate-400">{description}</p>
-        </div>
-      </div>
-      {children}
-    </section>
-  );
-}
+function MetricCard({ label, value, tone = "cyan" }: { label: string; value: string; tone?: "cyan" | "green" | "red" | "blue" }) {
+  const toneClass = {
+    cyan: "border-cyan-400/30 text-cyan-100",
+    green: "border-emerald-400/30 text-emerald-100",
+    red: "border-red-400/30 text-red-100",
+    blue: "border-blue-400/30 text-blue-100",
+  }[tone];
 
-function Checklist({ items }: { items: string[] }) {
   return (
-    <ul className="space-y-3 text-sm text-slate-200">
-      {items.map((item) => (
-        <li key={item} className="flex gap-3 rounded-2xl border border-slate-700/70 bg-slate-950/55 p-3">
-          <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-cyan-300/60 bg-cyan-300/10 text-xs text-cyan-100">✓</span>
-          <span>{item}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function SummaryTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-slate-700/70 bg-slate-950/60 p-4">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</p>
-      <p className="mt-2 truncate text-sm font-bold text-slate-100">{value}</p>
+    <div className={`rounded-2xl border bg-slate-950/45 p-4 ${toneClass}`}>
+      <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <p className="mt-2 text-lg font-black">{value}</p>
     </div>
   );
-}
-
-function getWanModeLabel(type: WanConnectionType) {
-  if (type === "dhcp") return "DHCP จากผู้ให้บริการ";
-  if (type === "pppoe") return "PPPoE ด้วย Username/Password";
-  return "Static IP จากผู้ให้บริการ";
 }
 
 function getSyntaxProfile(version: FortiOsVersion) {
   const sharedProfile = {
     coreSyntax: "Basic WAN/LAN/DHCP/Firewall Policy/NAT syntax compatible",
-    futureScopes: ["VPN", "SD-WAN", "Security Profile"],
+    syntaxModules: {
+      basic: "compatible",
+      vpn: "reserved-for-version-specific-rules",
+      sdWan: "reserved-for-version-specific-rules",
+      securityProfile: "reserved-for-version-specific-rules",
+    },
   };
 
   const versionNotes: Record<FortiOsVersion, string[]> = {
-    "7.0": ["ใช้เป็น baseline สำหรับงาน First Implement", "ตรวจสอบ SSL VPN และ Security Profile syntax หากเพิ่มในอนาคต"],
-    "7.2": ["ยังคงใช้ basic interface, DHCP, policy และ NAT syntax ชุดเดียวกัน", "เตรียมแยก logic สำหรับ SD-WAN syntax ในอนาคต"],
-    "7.4": ["เหมาะกับ template ปัจจุบันสำหรับ basic WAN/LAN/DHCP/Policy/NAT", "ควรตรวจสอบ build จริงก่อนใช้คำสั่ง VPN เพิ่มเติม"],
-    "7.6": ["รองรับโครงสร้าง profile สำหรับเปลี่ยน syntax ตาม version ในอนาคต", "ตรวจสอบ release notes ก่อนใช้ Security Profile หรือ VPN ขั้นสูง"],
+    "7.0": ["Baseline profile สำหรับ First Implement", "เตรียมแยก VPN / SD-WAN syntax ในอนาคต"],
+    "7.2": ["Basic WAN/LAN/DHCP/Policy/NAT ใช้ syntax ชุดเดียวกับ template นี้", "ตรวจสอบ build จริงก่อนใช้ feature ขั้นสูง"],
+    "7.4": ["Profile แนะนำสำหรับ template ปัจจุบัน", "รองรับโครงสร้างแยก Security Profile syntax ภายหลัง"],
+    "7.6": ["เตรียมไว้สำหรับ syntax รุ่นใหม่", "ตรวจสอบ release notes และ build จริงก่อนใช้งานจริง"],
   };
 
-  return {
-    version,
-    ...sharedProfile,
-    notes: versionNotes[version],
-  };
-}
-
-function getGeneratedSectionCount(enableSslVpn: boolean, vlans: Vlan[], policies: PolicyRule[]) {
-  return 7 + vlans.length * 2 + policies.length + (enableSslVpn ? 1 : 0);
+  return { version, ...sharedProfile, notes: versionNotes[version] };
 }
 
 function makeUid(prefix: string) {
@@ -270,11 +208,11 @@ function makeUid(prefix: string) {
 
 function getVlanName(vlan?: Vlan) {
   if (!vlan) return "ไม่พบ VLAN";
-  return vlan.name.trim() || `VLAN${vlan.vlanId}`;
+  return `VLAN${vlan.vlanId} ${vlan.name}`;
 }
 
 function getDestinationName(destination: string, vlans: Vlan[]) {
-  if (destination === internetDestination) return "อินเทอร์เน็ต";
+  if (destination === internetDestination) return "Internet";
   return getVlanName(vlans.find((vlan) => vlan.uid === destination));
 }
 
@@ -289,592 +227,303 @@ function getNatLabel(policy: PolicyRule | PolicyDraft) {
   return policy.nat === "ENABLE" ? "Enable" : "Disable";
 }
 
+function cidrFromMask(mask: string) {
+  const bits = mask
+    .split(".")
+    .map((part) => Number(part).toString(2).padStart(8, "0"))
+    .join("")
+    .split("1").length - 1;
+  return Number.isFinite(bits) ? bits : 24;
+}
+
+function buildWanCli(form: BasicFortigateForm) {
+  const lines = ["config system interface", `    edit \"${form.wanInterface}\"`, "        set role wan", "        set allowaccess ping"];
+  if (form.wanConnectionType === "dhcp") lines.push("        set mode dhcp");
+  if (form.wanConnectionType === "pppoe") lines.push("        set mode pppoe", `        set username \"${form.pppoeUsername}\"`, `        set password \"${form.pppoePassword}\"`);
+  if (form.wanConnectionType === "static") lines.push("        set mode static", `        set ip ${form.wanIpAddress} ${form.wanSubnetMask}`);
+  lines.push("    next", "end");
+  return lines.join("\n");
+}
+
 function buildVlanAndDhcpCli(vlans: Vlan[], dnsPrimary: string, dnsSecondary: string) {
-  if (vlans.length === 0) {
-    return "# ยังไม่มี VLAN เพิ่ม VLAN อย่างน้อย 1 รายการเพื่อสร้าง CLI ส่วนนี้";
-  }
-
   return vlans
-    .map((vlan, index) => {
-      const vlanName = getVlanName(vlan);
-      return `# VLAN ${index + 1}: ${vlanName}
-# คำอธิบาย: สร้าง VLAN ID ${vlan.vlanId} บน ${vlan.interfaceName} พร้อม Gateway ${vlan.gatewayIp} และ DHCP ช่วง ${vlan.dhcpStartIp}-${vlan.dhcpEndIp}
-config system interface
-    edit "${vlanName}"
-        set role lan
-        set interface "${vlan.interfaceName}"
-        set vlanid ${vlan.vlanId}
-        set ip ${vlan.gatewayIp} ${vlan.subnetMask}
-        set allowaccess ping https ssh
-    next
-end
-
-config system dhcp server
-    edit 0
-        set interface "${vlanName}"
-        set default-gateway ${vlan.gatewayIp}
-        set netmask ${vlan.subnetMask}
-        set dns-service specify
-        set dns-server1 ${dnsPrimary}
-        set dns-server2 ${dnsSecondary}
-        config ip-range
-            edit 1
-                set start-ip ${vlan.dhcpStartIp}
-                set end-ip ${vlan.dhcpEndIp}
-            next
-        end
-    next
-end`;
-    })
+    .map((vlan, index) => `# VLAN ${index + 1}: ${getVlanName(vlan)}\n# คำอธิบาย: สร้าง VLAN ${vlan.vlanId} บน ${vlan.interfaceName} พร้อม DHCP ${vlan.dhcpStartIp}-${vlan.dhcpEndIp}\nconfig system interface\n    edit \"${getVlanName(vlan)}\"\n        set role lan\n        set interface \"${vlan.interfaceName}\"\n        set vlanid ${vlan.vlanId}\n        set ip ${vlan.gatewayIp} ${vlan.subnetMask}\n        set allowaccess ping https ssh\n    next\nend\n\nconfig system dhcp server\n    edit 0\n        set interface \"${getVlanName(vlan)}\"\n        set default-gateway ${vlan.gatewayIp}\n        set netmask ${vlan.subnetMask}\n        set dns-service specify\n        set dns-server1 ${dnsPrimary}\n        set dns-server2 ${dnsSecondary}\n        config ip-range\n            edit 1\n                set start-ip ${vlan.dhcpStartIp}\n                set end-ip ${vlan.dhcpEndIp}\n            next\n        end\n    next\nend`)
     .join("\n\n");
 }
 
 function buildPolicyCli(policies: PolicyRule[], vlans: Vlan[], wanInterface: string) {
-  if (policies.length === 0) {
-    return "# ยังไม่มี Firewall Policy เพิ่ม Policy อย่างน้อย 1 รายการเพื่อสร้าง CLI ส่วนนี้";
-  }
-
   return policies
-    .filter((policy) => vlans.some((vlan) => vlan.uid === policy.sourceVlanUid))
     .map((policy, index) => {
       const source = vlans.find((vlan) => vlan.uid === policy.sourceVlanUid);
       const destination = vlans.find((vlan) => vlan.uid === policy.destination);
       const destinationInterface = policy.destination === internetDestination ? wanInterface : getVlanName(destination);
       const actionText = policy.action === "ACCEPT" ? "อนุญาต" : "ปฏิเสธ";
       const natText = getEffectiveNat(policy) === "enable" ? "เปิด NAT" : "ปิด NAT";
-
-      return `# Policy ${index + 1}: ${policy.name}
-# คำอธิบาย: ${actionText} ทราฟฟิกจาก ${getVlanName(source)} ไปยัง ${getDestinationName(policy.destination, vlans)} บริการ ${policy.service} และ ${natText}
-config firewall policy
-    edit 0
-        set name "${policy.name}"
-        set srcintf "${getVlanName(source)}"
-        set dstintf "${destinationInterface}"
-        set srcaddr "all"
-        set dstaddr "all"
-        set action ${policy.action.toLowerCase()}
-        set schedule "always"
-        set service "${policy.service}"
-        set logtraffic all
-        set nat ${getEffectiveNat(policy)}
-    next
-end`;
+      return `# Policy ${index + 1}: ${policy.name}\n# คำอธิบาย: ${actionText} จาก ${getVlanName(source)} ไปยัง ${getDestinationName(policy.destination, vlans)} service ${policy.service} และ ${natText}\nconfig firewall policy\n    edit 0\n        set name \"${policy.name}\"\n        set srcintf \"${getVlanName(source)}\"\n        set dstintf \"${destinationInterface}\"\n        set srcaddr \"all\"\n        set dstaddr \"all\"\n        set action ${policy.action.toLowerCase()}\n        set schedule \"always\"\n        set service \"${policy.service}\"\n        set logtraffic all\n        set nat ${getEffectiveNat(policy)}\n    next\nend`;
     })
     .join("\n\n");
 }
 
-function buildWanCli(form: BasicFortigateForm) {
-  const baseLines = [
-    "config system interface",
-    `    edit "${form.wanInterface}"`,
-    "        set role wan",
-    "        set allowaccess ping",
-  ];
-
-  if (form.wanConnectionType === "dhcp") {
-    baseLines.push("        set mode dhcp");
-  }
-
-  if (form.wanConnectionType === "pppoe") {
-    baseLines.push(
-      "        set mode pppoe",
-      `        set username "${form.pppoeUsername}"`,
-      `        set password "${form.pppoePassword}"`,
-    );
-  }
-
-  if (form.wanConnectionType === "static") {
-    baseLines.push("        set mode static", `        set ip ${form.wanIpAddress} ${form.wanSubnetMask}`);
-  }
-
-  baseLines.push("    next", "end");
-  return baseLines.join("\n");
-}
-
 function buildDefaultRouteCli(form: BasicFortigateForm) {
-  if (form.wanConnectionType !== "static") {
-    return `# WAN เป็น ${getWanModeLabel(form.wanConnectionType)} โดยทั่วไป Default Route จะได้รับจาก ISP อัตโนมัติ\n# หาก ISP ไม่ส่ง Route ให้เพิ่ม Static Route ตามข้อมูลจริงของผู้ให้บริการ`;
-  }
-
-  return `config router static\n    edit 1\n        set gateway ${form.wanGateway}\n        set device "${form.wanInterface}"\n    next\nend`;
+  if (form.wanConnectionType !== "static") return `# WAN mode ${form.wanConnectionType}: default route is normally received from ISP`;
+  return `config router static\n    edit 1\n        set gateway ${form.wanGateway}\n        set device \"${form.wanInterface}\"\n    next\nend`;
 }
 
 function buildVpnCli(form: BasicFortigateForm) {
-  if (!form.enableSslVpn) {
-    return "# ไม่ได้เปิด SSL VPN จึงไม่สร้างคำสั่งส่วน VPN";
-  }
-
-  return `# สร้าง Address สำหรับ LAN ที่อนุญาตให้ผู้ใช้ VPN เข้าถึง\nconfig firewall address\n    edit "LAN_SUBNET_FOR_SSLVPN"\n        set subnet ${form.vpnAllowedLanSubnet}\n    next\nend\n\n# ตั้งค่า SSL VPN Portal แบบพื้นฐาน\nconfig vpn ssl web portal\n    edit "${form.vpnPortalName}"\n        set tunnel-mode enable\n        set split-tunneling enable\n        set ip-pools "${form.vpnTunnelIpPool}"\n    next\nend\n\n# ผูก User Group กับ Portal\nconfig vpn ssl settings\n    set servercert "Fortinet_Factory"\n    set tunnel-ip-pools "${form.vpnTunnelIpPool}"\n    set source-interface "${form.wanInterface}"\n    set source-address "all"\n    set default-portal "${form.vpnPortalName}"\n    config authentication-rule\n        edit 1\n            set groups "${form.vpnUserGroup}"\n            set portal "${form.vpnPortalName}"\n        next\n    end\nend\n\n# Policy ให้ผู้ใช้ SSL VPN เข้าถึง LAN\nconfig firewall policy\n    edit 0\n        set name "SSLVPN_to_LAN"\n        set srcintf "ssl.root"\n        set dstintf "${form.lanInterface}"\n        set srcaddr "all"\n        set dstaddr "LAN_SUBNET_FOR_SSLVPN"\n        set action accept\n        set schedule "always"\n        set service "ALL"\n        set logtraffic all\n        set nat disable\n    next\nend`;
+  if (!form.enableSslVpn) return "# SSL VPN disabled";
+  return `# Optional SSL VPN template\nconfig vpn ssl web portal\n    edit \"${form.vpnPortalName}\"\n        set tunnel-mode enable\n        set split-tunneling enable\n        set ip-pools \"${form.vpnTunnelIpPool}\"\n    next\nend\n\nconfig vpn ssl settings\n    set source-interface \"${form.wanInterface}\"\n    set source-address \"all\"\n    set default-portal \"${form.vpnPortalName}\"\n    config authentication-rule\n        edit 1\n            set groups \"${form.vpnUserGroup}\"\n            set portal \"${form.vpnPortalName}\"\n        next\n    end\nend`;
 }
 
-function buildConfig(form: BasicFortigateForm, vlans: Vlan[], policies: PolicyRule[]) {
-  return `# FortiRule Builder - Basic FortiGate First Implementation\n# FortiGate Model: ${form.fortigateModel}\n# FortiOS Version: ${form.fortiOsVersion}\n# คอนฟิกนี้สร้างจากหน้าเว็บฝั่ง Frontend เท่านั้น ไม่มีการเชื่อมต่อ FortiGate จริง\n# Syntax Profile: ${getSyntaxProfile(form.fortiOsVersion).coreSyntax}\n# Version Notes: ${getSyntaxProfile(form.fortiOsVersion).notes.join(" | ")}\n# ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำไปใช้กับอุปกรณ์จริง\n\n# ส่วนที่ 1: WAN Internet Setup\n# คำอธิบาย: ตั้งค่า ${form.wanInterface} เป็นขาออกอินเทอร์เน็ตแบบ ${getWanModeLabel(form.wanConnectionType)}\n${buildWanCli(form)}\n\n# ส่วนที่ 2: LAN Setup\n# คำอธิบาย: ตั้งค่า ${form.lanInterface} เป็น Gateway ของเครือข่ายภายใน\nconfig system interface\n    edit "${form.lanInterface}"\n        set role lan\n        set mode static\n        set ip ${form.lanIpAddress} ${form.lanSubnetMask}\n        set allowaccess ping https ssh\n    next\nend\n\n# ส่วนที่ 3: DHCP Server\n# คำอธิบาย: แจก IP ให้ Client ใน LAN พร้อม Gateway และ DNS\nconfig system dhcp server\n    edit 1\n        set interface "${form.lanInterface}"\n        set default-gateway ${form.dhcpGateway}\n        set netmask ${form.lanSubnetMask}\n        set dns-service specify\n        set dns-server1 ${form.dnsPrimary}\n        set dns-server2 ${form.dnsSecondary}\n        config ip-range\n            edit 1\n                set start-ip ${form.dhcpStartIp}\n                set end-ip ${form.dhcpEndIp}\n            next\n        end\n    next\nend\n\n# ส่วนที่ 4: Multi VLAN และ DHCP ต่อ VLAN
-# คำอธิบาย: สร้าง VLAN หลายวงพร้อม DHCP แยกต่อ VLAN ตามตารางด้านซ้าย
-${buildVlanAndDhcpCli(vlans, form.dnsPrimary, form.dnsSecondary)}
+function buildConfig(project: ProjectProfile, form: BasicFortigateForm, vlans: Vlan[], policies: PolicyRule[]) {
+  const syntaxProfile = getSyntaxProfile(form.fortiOsVersion);
 
-# ส่วนที่ 5: DNS and Default Gateway\n# คำอธิบาย: ตั้งค่า DNS ของ FortiGate และ Default Route สำหรับออกอินเทอร์เน็ต\nconfig system dns\n    set primary ${form.dnsPrimary}\n    set secondary ${form.dnsSecondary}\nend\n\n${buildDefaultRouteCli(form)}\n\n# ส่วนที่ 6: Basic Firewall Policy - LAN to Internet\n# คำอธิบาย: อนุญาตให้ LAN ออก Internet ได้ทุก Service และเปิด NAT เพื่อแปลง IP ภายในเป็น IP ขา WAN\nconfig firewall policy\n    edit 0\n        set name "LAN_to_Internet"\n        set srcintf "${form.lanInterface}"\n        set dstintf "${form.wanInterface}"\n        set srcaddr "all"\n        set dstaddr "all"\n        set action accept\n        set schedule "always"\n        set service "ALL"\n        set logtraffic all\n        set nat enable\n    next\nend\n\n# ส่วนที่ 7: Firewall Policy Builder และ NAT Options\n# คำอธิบาย: สร้าง Policy ระหว่าง VLAN หรือออกอินเทอร์เน็ต พร้อม NAT แบบ Auto/Enable/Disable\n${buildPolicyCli(policies, vlans, form.wanInterface)}\n\n# ส่วนที่ 8: Optional SSL VPN\n# คำอธิบาย: ส่วนนี้ใช้เมื่อเปิด Toggle SSL VPN เท่านั้น และเป็น Template พื้นฐานสำหรับให้ VPN เข้าถึง LAN\n${buildVpnCli(form)}\n\n# ส่วนที่ 9: Firmware and Backup Checklist\n# คำอธิบาย: รายการนี้เป็น Checklist เท่านั้น ไม่สร้างคำสั่งอัปเกรด Firmware จริง\n${firmwareChecklist.map((item, index) => `# [ ] ${index + 1}. ${item}`).join("\n")}\n\n# ส่วนที่ 10: Testing Checklist\n# คำอธิบาย: ใช้ตรวจสอบหลังติดตั้งเสร็จสำหรับ Engineer มือใหม่\n${testingChecklist.map((item, index) => `# [ ] ${index + 1}. ${item}`).join("\n")}`;
+  return `# FortiRule Builder - Professional Deployment CLI\n# Project: ${project.projectName}\n# Engineer: ${project.engineerName}\n# Date: ${project.projectDate}\n# FortiGate Model: ${form.fortigateModel}\n# FortiOS Version: ${form.fortiOsVersion}\n# Syntax Profile: ${syntaxProfile.coreSyntax}\n# Version Notes: ${syntaxProfile.notes.join(" | ")}\n# ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำไปใช้กับอุปกรณ์จริง\n# Frontend only: ไม่มีการเชื่อมต่อ FortiGate จริง\n\n# === WAN ===\n${buildWanCli(form)}\n\n# === LAN / VLAN + DHCP ===\n${buildVlanAndDhcpCli(vlans, form.dnsPrimary, form.dnsSecondary)}\n\n# === DNS / Routing ===\nconfig system dns\n    set primary ${form.dnsPrimary}\n    set secondary ${form.dnsSecondary}\nend\n\n${buildDefaultRouteCli(form)}\n\n# === Firewall Policy / NAT ===\n${buildPolicyCli(policies, vlans, form.wanInterface)}\n\n# === VPN ===\n${buildVpnCli(form)}\n\n# === Deployment Checklist ===\n${firmwareChecklist.map((item, index) => `# [ ] ${index + 1}. ${item}`).join("\n")}`;
+}
+
+function downloadText(filename: string, content: string, type = "text/plain;charset=utf-8") {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function renderCliLine(line: string, index: number) {
+  const isComment = line.trim().startsWith("#");
+  return (
+    <div key={`${line}-${index}`} className={isComment ? "text-emerald-300" : "text-cyan-50"}>
+      {line || "\u00A0"}
+    </div>
+  );
 }
 
 export default function Home() {
+  const [project, setProject] = useState<ProjectProfile>(defaultProject);
   const [form, setForm] = useState<BasicFortigateForm>(defaultForm);
   const [vlans, setVlans] = useState<Vlan[]>(defaultVlans);
   const [vlanDraft, setVlanDraft] = useState<VlanDraft>(defaultVlanDraft);
   const [policies, setPolicies] = useState<PolicyRule[]>(defaultPolicies);
   const [policyDraft, setPolicyDraft] = useState<PolicyDraft>(defaultPolicyDraft);
-  const [copyLabel, setCopyLabel] = useState("คัดลอก CLI");
-  const [hasGeneratedConfig, setHasGeneratedConfig] = useState(false);
+  const [copyLabel, setCopyLabel] = useState("Copy CLI");
+  const [viewMode, setViewMode] = useState("Topology");
 
-  const generatedConfig = useMemo(() => buildConfig(form, vlans, policies), [form, vlans, policies]);
-  const displayedConfig = hasGeneratedConfig ? generatedConfig : "";
+  const generatedConfig = useMemo(() => buildConfig(project, form, vlans, policies), [project, form, vlans, policies]);
+  const haStatus = "Standalone";
+  const totalNat = policies.filter((policy) => getEffectiveNat(policy) === "enable").length;
+  const completedItems = [true, true, vlans.length > 0, true, policies.length > 0, totalNat > 0, form.enableSslVpn, true].filter(Boolean).length;
+  const progress = Math.round((completedItems / firmwareChecklist.length) * 100);
 
+  const updateProject = (key: keyof ProjectProfile) => (event: ChangeEvent<HTMLInputElement>) => setProject((current) => ({ ...current, [key]: event.target.value }));
   const updateField = (key: keyof BasicFortigateForm) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const value = event.target instanceof HTMLInputElement && event.target.type === "checkbox" ? event.target.checked : event.target.value;
     setForm((current) => ({ ...current, [key]: value }));
   };
-
   const updateVlanDraft = (key: keyof VlanDraft) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const value = event.target.value;
     setVlanDraft((current) => ({ ...current, [key]: key === "allowInternet" ? value === "yes" : value }));
   };
-
   const updatePolicyDraft = (key: keyof PolicyDraft) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const value = event.target.value;
-    setPolicyDraft((current) => ({
-      ...current,
-      [key]: value,
-      ...(key === "destination" && current.nat === "AUTO" ? { nat: "AUTO" as NatMode } : {}),
-    }));
+    setPolicyDraft((current) => ({ ...current, [key]: event.target.value }));
   };
 
   const addVlan = () => {
     const newVlan = { ...vlanDraft, uid: makeUid("vlan") };
     setVlans((current) => [...current, newVlan]);
-    setVlanDraft((current) => ({
-      ...defaultVlanDraft,
-      vlanId: String(Number(current.vlanId || 30) + 10),
-      name: `VLAN${Number(current.vlanId || 30) + 10}_NEW`,
-    }));
-  };
-
-  const deleteVlan = (uid: string) => {
-    const remainingVlans = vlans.filter((vlan) => vlan.uid !== uid);
-    setVlans(remainingVlans);
-    setPolicies((current) => current.filter((policy) => policy.sourceVlanUid !== uid && policy.destination !== uid));
-    setPolicyDraft((current) => ({
-      ...current,
-      sourceVlanUid: current.sourceVlanUid === uid ? remainingVlans[0]?.uid || "" : current.sourceVlanUid,
-      destination: current.destination === uid ? internetDestination : current.destination,
-    }));
+    const nextId = Number(vlanDraft.vlanId || 50) + 10;
+    setVlanDraft({ ...defaultVlanDraft, vlanId: String(nextId), name: `VLAN${nextId}`, gatewayIp: `192.168.${nextId}.1`, dhcpStartIp: `192.168.${nextId}.100`, dhcpEndIp: `192.168.${nextId}.200` });
   };
 
   const addPolicy = () => {
     if (!policyDraft.sourceVlanUid) return;
     setPolicies((current) => [...current, { ...policyDraft, uid: makeUid("policy") }]);
-    setPolicyDraft((current) => ({ ...current, name: "นโยบายใหม่" }));
-  };
-
-  const deletePolicy = (uid: string) => {
-    setPolicies((current) => current.filter((policy) => policy.uid !== uid));
+    setPolicyDraft((current) => ({ ...current, name: "New_Policy" }));
   };
 
   const copyConfig = async () => {
-    if (!displayedConfig) return;
-    await navigator.clipboard.writeText(displayedConfig);
-    setCopyLabel("คัดลอกแล้ว ✓");
-    window.setTimeout(() => setCopyLabel("คัดลอก CLI"), 1800);
+    await navigator.clipboard.writeText(generatedConfig);
+    setCopyLabel("Copied ✓");
+    window.setTimeout(() => setCopyLabel("Copy CLI"), 1500);
   };
 
-  const exportConfig = () => {
-    if (!displayedConfig) return;
-    const blob = new Blob([displayedConfig], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "basic-fortigate-first-implementation.txt";
-    link.click();
-    URL.revokeObjectURL(url);
-  };
+  const saveProject = () => downloadText("fortirule-project.json", JSON.stringify({ project, form, vlans, policies }, null, 2), "application/json;charset=utf-8");
+  const exportTxt = () => downloadText("fortirule-config.txt", generatedConfig);
+  const exportPdf = () => downloadText("fortirule-config.pdf", generatedConfig, "application/pdf");
+  const exportReport = () => downloadText("implementation-report.txt", `Implementation Report\n\n${generatedConfig}`);
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_15%_15%,rgba(34,211,238,0.20),transparent_28%),radial-gradient(circle_at_85%_0%,rgba(59,130,246,0.18),transparent_30%),linear-gradient(135deg,#020617,#0f172a_52%,#111827)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-[1500px]">
-        <header className="mb-6 overflow-hidden rounded-[2rem] border border-cyan-300/20 bg-slate-950/70 shadow-2xl shadow-cyan-950/20 ring-1 ring-white/10 backdrop-blur">
-          <div className="grid gap-6 p-6 lg:grid-cols-[1fr_auto] lg:items-center lg:p-8">
+    <main className="min-h-screen bg-[#061122] text-slate-100">
+      <div className="fixed inset-y-0 left-0 z-30 hidden w-72 border-r border-sky-900/70 bg-[#07162c]/95 p-5 shadow-2xl shadow-slate-950/50 lg:block">
+        <div className="mb-8 rounded-2xl border border-cyan-300/20 bg-sky-500/10 p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-300 font-black text-slate-950">FR</div>
             <div>
-              <div className="mb-4 flex flex-wrap items-center gap-3">
-                <span className="rounded-full border border-cyan-300/40 bg-cyan-300/10 px-4 py-1.5 text-xs font-black uppercase tracking-[0.24em] text-cyan-100">FortiRule Builder</span>
-                <span className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-3 py-1.5 text-xs font-bold text-emerald-100">Offline Config Generator</span>
-              </div>
-              <h1 className="text-3xl font-black tracking-tight text-white sm:text-5xl">ตัวช่วยตั้งค่า FortiGate สำหรับงาน First Implement</h1>
-              <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-300 sm:text-base">
-                Dashboard ภาษาไทยสำหรับ Network Engineer มือใหม่ กรอกข้อมูลตามลำดับขั้น แล้วกด Generate เพื่อสร้าง FortiGate CLI แบบปลอดภัยโดยไม่เชื่อมต่ออุปกรณ์จริง
-              </p>
-            </div>
-            <div className="rounded-3xl border border-slate-700/70 bg-slate-900/80 p-4 shadow-inner shadow-slate-950/60">
-              <p className="text-xs font-bold uppercase tracking-[0.25em] text-slate-500">Security workflow</p>
-              <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs font-bold text-slate-200">
-                <span className="rounded-2xl bg-slate-950/70 px-3 py-3">Plan</span>
-                <span className="rounded-2xl bg-cyan-400/15 px-3 py-3 text-cyan-100">Generate</span>
-                <span className="rounded-2xl bg-slate-950/70 px-3 py-3">Review</span>
-              </div>
+              <h1 className="font-black text-white">FortiRule Builder</h1>
+              <p className="text-xs text-sky-200">First Implementation Assistant</p>
             </div>
           </div>
-        </header>
-
-        <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)_minmax(380px,0.85fr)]">
-          <aside className="xl:sticky xl:top-6 xl:self-start">
-            <nav className="rounded-[2rem] border border-slate-700/70 bg-slate-950/70 p-4 shadow-2xl shadow-slate-950/40 ring-1 ring-white/5 backdrop-blur">
-              <p className="px-2 pb-3 text-xs font-black uppercase tracking-[0.25em] text-cyan-200">Wizard Steps</p>
-              <div className="space-y-2">
-                {stepNavigation.map((step) => (
-                  <a key={step.id} href={`#${step.id}`} className="group flex items-center justify-between rounded-2xl border border-transparent px-3 py-3 text-sm transition hover:border-cyan-300/30 hover:bg-cyan-300/10">
-                    <span>
-                      <span className="block font-bold text-slate-100 group-hover:text-cyan-100">{step.label}</span>
-                      <span className="text-xs text-slate-500">{step.detail}</span>
-                    </span>
-                    <span className="text-slate-600 group-hover:text-cyan-200">›</span>
+        </div>
+        <div className="space-y-6 overflow-y-auto pb-8">
+          {sidebarSections.map((section) => (
+            <div key={section.title}>
+              <p className="mb-2 px-2 text-xs font-black uppercase tracking-[0.25em] text-sky-500">{section.title}</p>
+              <div className="space-y-1">
+                {section.items.map((item) => (
+                  <a key={item} className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-300 transition hover:bg-cyan-300/10 hover:text-cyan-100" href="#dashboard">
+                    {item}<span className="text-slate-600">›</span>
                   </a>
                 ))}
               </div>
-            </nav>
-          </aside>
+            </div>
+          ))}
+        </div>
+      </div>
 
-          <div className="space-y-6">
-            <ModuleCard id="compatibility" icon="🧬" title="FortiGate Model / FortiOS Version" description="เลือก Profile ของรุ่น FortiGate และ FortiOS Version เพื่อใส่ข้อมูลอ้างอิงใน CLI และเตรียมโครงสร้าง Syntax ตาม Version">
-              <div className="grid gap-5 md:grid-cols-2">
-                <Field label="FortiGate Model" hint="เลือกรุ่นที่ใช้จริง หรือเลือก Custom ถ้าไม่อยู่ในรายการ">
+      <div id="dashboard" className="lg:pl-72">
+        <div className="mx-auto max-w-[1720px] space-y-4 p-4 xl:p-6">
+          <section className={`${cardClass} p-4`}>
+            <div className="grid gap-3 xl:grid-cols-[1fr_220px_180px_auto] xl:items-end">
+              <Field label="Project Name">
+                <input className={inputClass} value={project.projectName} onChange={updateProject("projectName")} />
+              </Field>
+              <Field label="Engineer">
+                <input className={inputClass} value={project.engineerName} onChange={updateProject("engineerName")} />
+              </Field>
+              <Field label="Date">
+                <input className={inputClass} type="date" value={project.projectDate} onChange={updateProject("projectDate")} />
+              </Field>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={saveProject} className="rounded-xl bg-sky-500 px-3 py-2 text-sm font-bold text-white hover:bg-sky-400" type="button">Save Project</button>
+                <button className="rounded-xl border border-sky-700 px-3 py-2 text-sm font-bold text-sky-100 hover:bg-sky-900/60" type="button">Load Project</button>
+                <button onClick={exportTxt} className="rounded-xl border border-cyan-500/40 px-3 py-2 text-sm font-bold text-cyan-100 hover:bg-cyan-500/10" type="button">Export</button>
+              </div>
+            </div>
+          </section>
+
+          <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className={`${cardClass} p-4`}>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">Device Profile</p>
+                  <h2 className="text-xl font-black text-white">FortiGate Model / FortiOS Version</h2>
+                </div>
+                <div className="rounded-xl border border-amber-300/30 bg-amber-300/10 px-4 py-2 text-sm font-semibold text-amber-100">ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำไปใช้กับอุปกรณ์จริง</div>
+              </div>
+              <div className="grid gap-3 lg:grid-cols-3">
+                <Field label="FortiGate Model">
                   <select className={inputClass} value={form.fortigateModel} onChange={updateField("fortigateModel")}>
                     {fortigateModels.map((model) => <option key={model} value={model}>{model}</option>)}
                   </select>
                 </Field>
-                <Field label="FortiOS Version" hint="เลือก Version เป้าหมายเพื่อบันทึกไว้ใน CLI comments">
+                <Field label="FortiOS Version">
                   <select className={inputClass} value={form.fortiOsVersion} onChange={updateField("fortiOsVersion")}>
-                    <option value="7.0">7.0</option>
-                    <option value="7.2">7.2</option>
-                    <option value="7.4">7.4</option>
-                    <option value="7.6">7.6</option>
+                    {fortiOsVersions.map((version) => <option key={version} value={version}>{version}</option>)}
                   </select>
                 </Field>
-              </div>
-              <div className="mt-5 rounded-2xl border border-sky-300/30 bg-sky-300/10 p-4 text-sm leading-6 text-sky-100">
-                <p className="font-bold">Syntax profile: {getSyntaxProfile(form.fortiOsVersion).coreSyntax}</p>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-sky-100/80">
-                  {getSyntaxProfile(form.fortiOsVersion).notes.map((note) => <li key={note}>{note}</li>)}
-                </ul>
-                <p className="mt-3 font-semibold text-amber-100">ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำไปใช้กับอุปกรณ์จริง</p>
-              </div>
-            </ModuleCard>
-
-            <ModuleCard id="wan" icon="🌐" title="1. WAN Internet Setup" description="กรอกข้อมูลขาออกอินเทอร์เน็ตจาก ISP เลือก Static IP, DHCP หรือ PPPoE ตามวงจรจริง">
-              <div className="grid gap-5 md:grid-cols-2">
-                <Field label="WAN interface" hint="ตัวอย่าง: wan1, port1 หรือชื่อ Interface ที่ต่อกับ ISP">
-                  <input className={inputClass} value={form.wanInterface} onChange={updateField("wanInterface")} placeholder="wan1" />
-                </Field>
-                <Field label="ประเภทการเชื่อมต่อ" hint="เลือกตามเอกสารจากผู้ให้บริการ Internet">
-                  <select className={inputClass} value={form.wanConnectionType} onChange={updateField("wanConnectionType")}>
-                    <option value="static">Static IP</option>
-                    <option value="dhcp">DHCP</option>
-                    <option value="pppoe">PPPoE</option>
-                  </select>
-                </Field>
-                <Field label="IP address" hint="ใช้เมื่อเป็น Static IP เช่น 203.0.113.10">
-                  <input className={inputClass} value={form.wanIpAddress} onChange={updateField("wanIpAddress")} placeholder="203.0.113.10" />
-                </Field>
-                <Field label="Subnet mask" hint="ใช้เมื่อเป็น Static IP เช่น 255.255.255.248">
-                  <input className={inputClass} value={form.wanSubnetMask} onChange={updateField("wanSubnetMask")} placeholder="255.255.255.248" />
-                </Field>
-                <Field label="Gateway" hint="ใช้สร้าง Default Route เมื่อเป็น Static IP">
-                  <input className={inputClass} value={form.wanGateway} onChange={updateField("wanGateway")} placeholder="203.0.113.9" />
-                </Field>
-                <Field label="PPPoE username" hint="กรอกเมื่อ ISP ใช้ PPPoE เท่านั้น">
-                  <input className={inputClass} value={form.pppoeUsername} onChange={updateField("pppoeUsername")} placeholder="username จาก ISP" />
-                </Field>
-                <Field label="PPPoE password" hint="ใช้สำหรับวงจร PPPoE และจะแสดงใน CLI ที่ Export">
-                  <input className={inputClass} value={form.pppoePassword} onChange={updateField("pppoePassword")} placeholder="password จาก ISP" type="password" />
-                </Field>
-              </div>
-            </ModuleCard>
-
-            <ModuleCard id="lan" icon="🧭" title="2. LAN Setup" description="ตั้งค่า Interface ฝั่งภายในให้เป็น Gateway หลักของเครื่อง Client">
-              <div className="grid gap-5 md:grid-cols-3">
-                <Field label="LAN interface" hint="ตัวอย่าง: lan, port2, internal">
-                  <input className={inputClass} value={form.lanInterface} onChange={updateField("lanInterface")} placeholder="lan" />
-                </Field>
-                <Field label="LAN IP address" hint="IP Gateway ของผู้ใช้ภายใน">
-                  <input className={inputClass} value={form.lanIpAddress} onChange={updateField("lanIpAddress")} placeholder="192.168.1.1" />
-                </Field>
-                <Field label="Subnet mask" hint="ตัวอย่าง: 255.255.255.0">
-                  <input className={inputClass} value={form.lanSubnetMask} onChange={updateField("lanSubnetMask")} placeholder="255.255.255.0" />
-                </Field>
-              </div>
-            </ModuleCard>
-
-            <ModuleCard id="vlans" icon="🧩" title="3. Multi VLAN และ DHCP ต่อ VLAN" description="เพิ่ม VLAN ได้หลายวง กำหนด Gateway, DHCP และสถานะอนุญาตออกอินเทอร์เน็ตแยกต่อ VLAN">
-              <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-                <Field label="VLAN Name" hint="เช่น VLAN10_USERS หรือ VLAN20_SERVERS">
-                  <input className={inputClass} value={vlanDraft.name} onChange={updateVlanDraft("name")} placeholder="VLAN10_USERS" />
-                </Field>
-                <Field label="VLAN ID" hint="ตัวเลข VLAN จากแผน Network">
-                  <input className={inputClass} value={vlanDraft.vlanId} onChange={updateVlanDraft("vlanId")} placeholder="10" />
-                </Field>
-                <Field label="Interface" hint="พอร์ต Trunk/Parent เช่น port2">
-                  <input className={inputClass} value={vlanDraft.interfaceName} onChange={updateVlanDraft("interfaceName")} placeholder="port2" />
-                </Field>
-                <Field label="Gateway IP">
-                  <input className={inputClass} value={vlanDraft.gatewayIp} onChange={updateVlanDraft("gatewayIp")} placeholder="192.168.10.1" />
-                </Field>
-                <Field label="Subnet Mask">
-                  <input className={inputClass} value={vlanDraft.subnetMask} onChange={updateVlanDraft("subnetMask")} placeholder="255.255.255.0" />
-                </Field>
-                <Field label="Allow Internet" hint="ถ้าใช่ ควรมี Policy ไป Internet และเปิด NAT">
-                  <select className={inputClass} value={vlanDraft.allowInternet ? "yes" : "no"} onChange={updateVlanDraft("allowInternet")}>
-                    <option value="yes">ใช่ อนุญาตออกอินเทอร์เน็ต</option>
-                    <option value="no">ไม่ใช่ ใช้งานภายในเท่านั้น</option>
-                  </select>
-                </Field>
-                <Field label="DHCP Start IP">
-                  <input className={inputClass} value={vlanDraft.dhcpStartIp} onChange={updateVlanDraft("dhcpStartIp")} placeholder="192.168.10.100" />
-                </Field>
-                <Field label="DHCP End IP">
-                  <input className={inputClass} value={vlanDraft.dhcpEndIp} onChange={updateVlanDraft("dhcpEndIp")} placeholder="192.168.10.200" />
-                </Field>
-                <div className="flex items-end">
-                  <button type="button" onClick={addVlan} className="w-full rounded-2xl bg-cyan-300 px-5 py-3 text-sm font-black text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-200">เพิ่ม VLAN</button>
+                <div className="rounded-2xl border border-sky-400/20 bg-sky-400/10 p-3 text-sm text-sky-100">
+                  <p className="font-bold">{getSyntaxProfile(form.fortiOsVersion).coreSyntax}</p>
+                  <p className="mt-1 text-xs text-sky-200/80">{getSyntaxProfile(form.fortiOsVersion).notes.join(" • ")}</p>
                 </div>
               </div>
-              <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-700/70">
-                <table className="w-full min-w-[900px] text-left text-sm">
-                  <thead className="bg-slate-950/80 text-slate-300">
-                    <tr>
-                      <th className="px-4 py-3">VLAN</th>
-                      <th className="px-4 py-3">ID</th>
-                      <th className="px-4 py-3">Interface</th>
-                      <th className="px-4 py-3">Gateway</th>
-                      <th className="px-4 py-3">DHCP Range</th>
-                      <th className="px-4 py-3">Internet</th>
-                      <th className="px-4 py-3">ลบ</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800 bg-slate-950/45">
-                    {vlans.map((vlan) => (
-                      <tr key={vlan.uid}>
-                        <td className="px-4 py-3 font-bold text-white">{getVlanName(vlan)}</td>
-                        <td className="px-4 py-3">{vlan.vlanId}</td>
-                        <td className="px-4 py-3">{vlan.interfaceName}</td>
-                        <td className="px-4 py-3">{vlan.gatewayIp}</td>
-                        <td className="px-4 py-3">{vlan.dhcpStartIp} - {vlan.dhcpEndIp}</td>
-                        <td className="px-4 py-3">{vlan.allowInternet ? "อนุญาต" : "ไม่อนุญาต"}</td>
-                        <td className="px-4 py-3"><button type="button" onClick={() => deleteVlan(vlan.uid)} className="rounded-xl border border-red-300/30 px-3 py-2 text-xs font-bold text-red-100 hover:bg-red-500/20">ลบ</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </ModuleCard>
+            </div>
 
-            <ModuleCard id="dhcp" icon="📡" title="4. DHCP Server" description="กำหนดช่วง IP, DNS และ Gateway ที่จะแจกให้ Client ใน LAN">
-              <div className="grid gap-5 md:grid-cols-2">
-                <Field label="DHCP start IP" hint="IP แรกของช่วงที่จะแจกให้ Client">
-                  <input className={inputClass} value={form.dhcpStartIp} onChange={updateField("dhcpStartIp")} placeholder="192.168.1.100" />
-                </Field>
-                <Field label="DHCP end IP" hint="IP สุดท้ายของช่วงที่จะแจกให้ Client">
-                  <input className={inputClass} value={form.dhcpEndIp} onChange={updateField("dhcpEndIp")} placeholder="192.168.1.200" />
-                </Field>
-                <Field label="DNS primary" hint="ตัวอย่าง DNS สาธารณะ: 8.8.8.8">
-                  <input className={inputClass} value={form.dnsPrimary} onChange={updateField("dnsPrimary")} placeholder="8.8.8.8" />
-                </Field>
-                <Field label="DNS secondary" hint="ตัวอย่าง DNS สำรอง: 1.1.1.1">
-                  <input className={inputClass} value={form.dnsSecondary} onChange={updateField("dnsSecondary")} placeholder="1.1.1.1" />
-                </Field>
-                <Field label="Gateway" hint="ปกติใช้ IP เดียวกับ LAN interface">
-                  <input className={inputClass} value={form.dhcpGateway} onChange={updateField("dhcpGateway")} placeholder="192.168.1.1" />
-                </Field>
+            <div className={`${cardClass} p-4`}>
+              <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">Summary</p>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <MetricCard label="Model" value={form.fortigateModel} />
+                <MetricCard label="FortiOS" value={form.fortiOsVersion} />
+                <MetricCard label="Total VLAN" value={String(vlans.length)} tone="blue" />
+                <MetricCard label="Total Policy" value={String(policies.length)} tone="blue" />
+                <MetricCard label="Total NAT" value={String(totalNat)} tone="green" />
+                <MetricCard label="VPN Status" value={form.enableSslVpn ? "Enabled" : "Disabled"} tone={form.enableSslVpn ? "green" : "red"} />
+                <MetricCard label="HA Status" value={haStatus} />
               </div>
-            </ModuleCard>
+            </div>
+          </section>
 
-            <ModuleCard id="policy" icon="🛡️" title="5. Firewall Policy Builder และ NAT Options" description="สร้าง Policy หลายรายการ เลือกต้นทาง ปลายทาง Service, Action และ NAT แบบ Auto/Enable/Disable">
-              <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-                <Field label="Policy Name">
-                  <input className={inputClass} value={policyDraft.name} onChange={updatePolicyDraft("name")} placeholder="Users_to_Internet" />
-                </Field>
-                <Field label="Source VLAN">
-                  <select className={inputClass} value={policyDraft.sourceVlanUid} onChange={updatePolicyDraft("sourceVlanUid")}>
-                    {vlans.map((vlan) => <option key={vlan.uid} value={vlan.uid}>{getVlanName(vlan)}</option>)}
-                  </select>
-                </Field>
-                <Field label="Destination" hint="Internet จะเปิด NAT อัตโนมัติเมื่อเลือก Auto">
-                  <select className={inputClass} value={policyDraft.destination} onChange={updatePolicyDraft("destination")}>
-                    <option value={internetDestination}>อินเทอร์เน็ต</option>
-                    {vlans.map((vlan) => <option key={vlan.uid} value={vlan.uid}>{getVlanName(vlan)}</option>)}
-                  </select>
-                </Field>
-                <Field label="Services">
-                  <select className={inputClass} value={policyDraft.service} onChange={updatePolicyDraft("service")}>
-                    {firewallServices.map((service) => <option key={service} value={service}>{service}</option>)}
-                  </select>
-                </Field>
-                <Field label="Action">
-                  <select className={inputClass} value={policyDraft.action} onChange={updatePolicyDraft("action")}>
-                    <option value="ACCEPT">ACCEPT - อนุญาต</option>
-                    <option value="DENY">DENY - ปฏิเสธ</option>
-                  </select>
-                </Field>
-                <Field label="NAT" hint="Auto: Internet = Enable, VLAN ภายใน = Disable">
-                  <select className={inputClass} value={policyDraft.nat} onChange={updatePolicyDraft("nat")}>
-                    <option value="AUTO">Auto</option>
-                    <option value="ENABLE">Enable</option>
-                    <option value="DISABLE">Disable</option>
-                  </select>
-                </Field>
-                <div className="md:col-span-2 xl:col-span-3">
-                  <button type="button" onClick={addPolicy} disabled={vlans.length === 0} className="rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-slate-950 shadow-lg shadow-emerald-950/30 transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-40">เพิ่ม Firewall Policy</button>
-                </div>
-              </div>
-              <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-700/70">
-                <table className="w-full min-w-[900px] text-left text-sm">
-                  <thead className="bg-slate-950/80 text-slate-300">
-                    <tr>
-                      <th className="px-4 py-3">Policy</th>
-                      <th className="px-4 py-3">Source</th>
-                      <th className="px-4 py-3">Destination</th>
-                      <th className="px-4 py-3">Service</th>
-                      <th className="px-4 py-3">Action</th>
-                      <th className="px-4 py-3">NAT</th>
-                      <th className="px-4 py-3">ลบ</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800 bg-slate-950/45">
-                    {policies.map((policy) => (
-                      <tr key={policy.uid}>
-                        <td className="px-4 py-3 font-bold text-white">{policy.name}</td>
-                        <td className="px-4 py-3">{getVlanName(vlans.find((vlan) => vlan.uid === policy.sourceVlanUid))}</td>
-                        <td className="px-4 py-3">{getDestinationName(policy.destination, vlans)}</td>
-                        <td className="px-4 py-3">{policy.service}</td>
-                        <td className="px-4 py-3">{policy.action}</td>
-                        <td className="px-4 py-3">{getNatLabel(policy)}</td>
-                        <td className="px-4 py-3"><button type="button" onClick={() => deletePolicy(policy.uid)} className="rounded-xl border border-red-300/30 px-3 py-2 text-xs font-bold text-red-100 hover:bg-red-500/20">ลบ</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </ModuleCard>
-
-            <ModuleCard id="nat-dns" icon="🔁" title="6. NAT / DNS / Gateway" description="ตรวจสอบค่า NAT, DNS และ Default Gateway ก่อนสร้าง CLI เพื่อหลีกเลี่ยงปัญหาออกอินเทอร์เน็ตไม่ได้">
-              <div className="grid gap-4 md:grid-cols-3">
-                <SummaryTile label="NAT Status" value="Enable สำหรับ LAN to Internet" />
-                <SummaryTile label="DNS" value={`${form.dnsPrimary} / ${form.dnsSecondary}`} />
-                <SummaryTile label="Default Gateway" value={form.wanConnectionType === "static" ? form.wanGateway : getWanModeLabel(form.wanConnectionType)} />
-              </div>
-            </ModuleCard>
-
-            <ModuleCard id="vpn" icon="🔐" title="7. Optional SSL VPN" description="เปิดเฉพาะเมื่อไซต์นี้ต้องการให้ผู้ใช้นอกองค์กร VPN เข้ามาใช้งาน LAN">
-              <label className="mb-5 flex cursor-pointer items-center justify-between gap-4 rounded-2xl border border-slate-700/70 bg-slate-950/60 p-4">
-                <span>
-                  <span className="block font-bold text-white">Enable SSL VPN</span>
-                  <span className="text-xs text-slate-400">เมื่อเปิด ระบบจะสร้าง SSL VPN CLI และ Policy เข้า LAN</span>
-                </span>
-                <input checked={form.enableSslVpn} className="h-6 w-6 accent-cyan-300" onChange={updateField("enableSslVpn")} type="checkbox" />
-              </label>
-              {form.enableSslVpn ? (
-                <div className="grid gap-5 md:grid-cols-2">
-                  <Field label="VPN user group" hint="ต้องมี User Group นี้บน FortiGate หรือสร้างเพิ่มก่อนใช้งาน">
-                    <input className={inputClass} value={form.vpnUserGroup} onChange={updateField("vpnUserGroup")} placeholder="SSLVPN_Users" />
-                  </Field>
-                  <Field label="Tunnel IP pool" hint="ชื่อ IP Pool สำหรับผู้ใช้ SSL VPN">
-                    <input className={inputClass} value={form.vpnTunnelIpPool} onChange={updateField("vpnTunnelIpPool")} placeholder="SSLVPN_TUNNEL_ADDR1" />
-                  </Field>
-                  <Field label="Allowed LAN subnet" hint="รูปแบบ FortiGate เช่น 192.168.1.0 255.255.255.0">
-                    <input className={inputClass} value={form.vpnAllowedLanSubnet} onChange={updateField("vpnAllowedLanSubnet")} placeholder="192.168.1.0 255.255.255.0" />
-                  </Field>
-                  <Field label="VPN portal name" hint="ชื่อ Portal ที่จะผูกกับ User Group">
-                    <input className={inputClass} value={form.vpnPortalName} onChange={updateField("vpnPortalName")} placeholder="full-access" />
-                  </Field>
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/40 p-5 text-sm text-slate-400">ยังไม่เปิด SSL VPN จึงจะไม่สร้างคำสั่ง VPN ใน CLI</div>
-              )}
-            </ModuleCard>
-
-            <ModuleCard id="checklist" icon="✅" title="8. Firmware และ Testing Checklist" description="Checklist สำหรับ Firmware และการทดสอบ ไม่มีคำสั่ง Upgrade Firmware จริงเพื่อความปลอดภัย">
-              <div className="grid gap-5 lg:grid-cols-2">
+          <section className="grid gap-4 2xl:grid-cols-[minmax(0,1.3fr)_minmax(440px,0.7fr)]">
+            <div className={`${cardClass} p-5`}>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h3 className="mb-3 font-bold text-cyan-100">Firmware Checklist</h3>
-                  <Checklist items={firmwareChecklist} />
-                </div>
-                <div>
-                  <h3 className="mb-3 font-bold text-cyan-100">Testing หลังติดตั้ง</h3>
-                  <Checklist items={testingChecklist} />
-                </div>
-              </div>
-            </ModuleCard>
-
-            <ModuleCard id="export" icon="🚀" title="9. Generate และ Export Config" description="กด Generate เพื่อสร้าง CLI จากข้อมูลทั้งหมด จากนั้น Copy หรือ Export เป็นไฟล์ .txt">
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <button type="button" onClick={() => setHasGeneratedConfig(true)} className="rounded-2xl bg-cyan-300 px-6 py-3 text-sm font-black text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-200">
-                  Generate FortiGate CLI
-                </button>
-                <p className="rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-sm leading-6 text-amber-100">
-                  ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำไปใช้กับอุปกรณ์จริง
-                </p>
-              </div>
-            </ModuleCard>
-          </div>
-
-          <aside className="space-y-6 xl:sticky xl:top-6 xl:self-start">
-            <section className="rounded-[2rem] border border-slate-700/70 bg-slate-950/70 p-5 shadow-2xl shadow-slate-950/50 ring-1 ring-white/5 backdrop-blur">
-              <div className="mb-4 flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-200">Summary</p>
-                  <h2 className="mt-1 text-xl font-black text-white">ภาพรวม Config</h2>
-                </div>
-                <span className="rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-1 text-xs font-bold text-cyan-100">{getGeneratedSectionCount(form.enableSslVpn, vlans, policies)} sections</span>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-                <SummaryTile label="FortiGate model" value={form.fortigateModel} />
-                <SummaryTile label="FortiOS version" value={form.fortiOsVersion} />
-                <SummaryTile label="WAN interface" value={`${form.wanInterface} / ${getWanModeLabel(form.wanConnectionType)}`} />
-                <SummaryTile label="LAN subnet" value={`${form.lanIpAddress} ${form.lanSubnetMask}`} />
-                <SummaryTile label="DHCP range" value={`${form.dhcpStartIp} - ${form.dhcpEndIp}`} />
-                <SummaryTile label="NAT status" value="Enable / Policy NAT options" />
-                <SummaryTile label="VLAN count" value={`${vlans.length} VLAN`} />
-                <SummaryTile label="Policy count" value={`${policies.length} policies`} />
-                <SummaryTile label="VPN status" value={form.enableSslVpn ? "เปิด SSL VPN" : "ปิด SSL VPN"} />
-                <SummaryTile label="Generated sections" value={`${getGeneratedSectionCount(form.enableSslVpn, vlans, policies)} ส่วน`} />
-              </div>
-            </section>
-
-            <section className="rounded-[2rem] border border-cyan-200/20 bg-slate-950/85 p-5 shadow-2xl shadow-slate-950/60 ring-1 ring-white/5 backdrop-blur">
-              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-200">Terminal Output</p>
-                  <h2 className="mt-1 text-2xl font-black text-white">คอนฟิก CLI สำหรับ FortiGate</h2>
-                  <p className="mt-1 text-sm text-amber-100">⚠️ ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำไปใช้กับอุปกรณ์จริง</p>
+                  <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">Network Topology</p>
+                  <h2 className="text-xl font-black text-white">Internet → WAN1 → FortiGate → VLANs</h2>
                 </div>
                 <div className="flex gap-2">
-                  <button type="button" onClick={copyConfig} disabled={!displayedConfig} className="rounded-xl bg-cyan-300 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-40">
-                    {copyLabel}
-                  </button>
-                  <button type="button" onClick={exportConfig} disabled={!displayedConfig} className="rounded-xl border border-white/15 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40">
-                    ส่งออก .txt
-                  </button>
+                  {['Topology', 'Logical', 'Physical'].map((mode) => (
+                    <button key={mode} onClick={() => setViewMode(mode)} className={`rounded-xl px-3 py-2 text-xs font-bold ${viewMode === mode ? 'bg-cyan-300 text-slate-950' : 'border border-sky-800 text-sky-100'}`} type="button">{mode}</button>
+                  ))}
+                  <button onClick={addVlan} className="rounded-xl bg-sky-500 px-3 py-2 text-xs font-bold text-white" type="button">+ Add Device</button>
                 </div>
               </div>
-              {displayedConfig ? (
-                <pre className="max-h-[70vh] overflow-auto rounded-3xl border border-slate-700/80 bg-[#020617] p-5 text-sm leading-6 text-cyan-50 shadow-inner shadow-black/60">
-                  <code>{displayedConfig}</code>
-                </pre>
-              ) : (
-                <div className="flex min-h-[420px] items-center justify-center rounded-3xl border border-dashed border-slate-700 bg-[#020617] p-8 text-center shadow-inner shadow-black/60">
-                  <div>
-                    <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-cyan-300/30 bg-cyan-300/10 text-2xl">⌁</div>
-                    <p className="text-lg font-bold text-slate-100">กรอกข้อมูลด้านซ้าย แล้วกด Generate เพื่อสร้าง FortiGate CLI</p>
-                    <p className="mt-2 text-sm text-slate-500">CLI จะปรากฏใน Terminal Output พร้อมปุ่ม Copy และ Export .txt</p>
+              <div className="rounded-3xl border border-sky-900/80 bg-[#081326] p-6">
+                <div className="mx-auto flex max-w-5xl flex-col items-center gap-4">
+                  <div className="rounded-2xl border border-cyan-300/30 bg-cyan-300/10 px-6 py-3 text-center shadow-lg shadow-cyan-950/30">🌐<div className="text-sm font-bold text-cyan-100">Internet</div></div>
+                  <div className="h-8 w-px bg-cyan-400/50" />
+                  <div className="rounded-2xl border border-sky-400/40 bg-sky-400/10 px-6 py-3 text-center"><p className="text-sm font-black text-sky-100">WAN1</p><p className="text-xs text-slate-400">{form.wanIpAddress}</p></div>
+                  <div className="h-8 w-px bg-cyan-400/50" />
+                  <div className="rounded-[2rem] border border-cyan-300/40 bg-gradient-to-br from-sky-500/30 to-cyan-300/10 px-10 py-6 text-center shadow-2xl shadow-cyan-950/40">
+                    <p className="text-3xl">🛡️</p><p className="text-lg font-black text-white">FortiGate {form.fortigateModel}</p><p className="text-xs text-cyan-100">FortiOS {form.fortiOsVersion} • {haStatus}</p>
+                  </div>
+                  <div className="grid w-full gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    {vlans.map((vlan) => (
+                      <div key={vlan.uid} className="rounded-2xl border border-sky-700/70 bg-slate-950/60 p-4 text-center">
+                        <p className="font-black text-cyan-100">VLAN{vlan.vlanId} {vlan.name}</p>
+                        <p className="text-sm text-slate-300">{vlan.gatewayIp}/{cidrFromMask(vlan.subnetMask)}</p>
+                        <p className="text-xs text-slate-500">{vlan.interfaceName}</p>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              )}
-            </section>
-          </aside>
+              </div>
+            </div>
+
+            <div className={`${cardClass} p-5`}>
+              <div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-black">Deployment Checklist</h2><span className="text-2xl font-black text-cyan-200">{progress}%</span></div>
+              <div className="mb-4 h-3 rounded-full bg-slate-950"><div className="h-3 rounded-full bg-gradient-to-r from-sky-500 to-cyan-300" style={{ width: `${progress}%` }} /></div>
+              <div className="space-y-2">
+                {firmwareChecklist.map((item, index) => {
+                  const done = index < completedItems;
+                  return <div key={item} className="flex items-center gap-3 rounded-xl border border-sky-900/70 bg-slate-950/45 p-3 text-sm"><span className={`h-3 w-3 rounded-full ${done ? 'bg-emerald-400' : 'bg-slate-600'}`} />{item}</div>;
+                })}
+              </div>
+            </div>
+          </section>
+
+          <section className="grid gap-4 xl:grid-cols-2">
+            <div className={`${cardClass} overflow-hidden`}>
+              <div className="flex items-center justify-between border-b border-sky-900/70 p-4"><h2 className="font-black text-white">VLAN Configuration</h2><button onClick={addVlan} className="rounded-xl bg-cyan-300 px-3 py-2 text-xs font-black text-slate-950" type="button">+ Add VLAN</button></div>
+              <div className="grid gap-3 p-4 md:grid-cols-3">
+                <Field label="ID"><input className={inputClass} value={vlanDraft.vlanId} onChange={updateVlanDraft("vlanId")} /></Field>
+                <Field label="Name"><input className={inputClass} value={vlanDraft.name} onChange={updateVlanDraft("name")} /></Field>
+                <Field label="Interface"><input className={inputClass} value={vlanDraft.interfaceName} onChange={updateVlanDraft("interfaceName")} /></Field>
+                <Field label="Gateway"><input className={inputClass} value={vlanDraft.gatewayIp} onChange={updateVlanDraft("gatewayIp")} /></Field>
+                <Field label="Subnet"><input className={inputClass} value={vlanDraft.subnetMask} onChange={updateVlanDraft("subnetMask")} /></Field>
+                <Field label="Internet"><select className={inputClass} value={vlanDraft.allowInternet ? "yes" : "no"} onChange={updateVlanDraft("allowInternet")}><option value="yes">Allow</option><option value="no">Block</option></select></Field>
+              </div>
+              <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-950/70 text-slate-400"><tr><th className="px-4 py-3">ID</th><th>Name</th><th>Interface</th><th>Gateway</th><th>Subnet</th><th>Action</th></tr></thead><tbody className="divide-y divide-sky-950/70">{vlans.map((vlan) => <tr key={vlan.uid}><td className="px-4 py-3 font-bold text-cyan-100">{vlan.vlanId}</td><td>{vlan.name}</td><td>{vlan.interfaceName}</td><td>{vlan.gatewayIp}</td><td>{vlan.subnetMask}</td><td><button onClick={() => setVlans((current) => current.filter((item) => item.uid !== vlan.uid))} className="text-red-300" type="button">Delete</button></td></tr>)}</tbody></table></div>
+            </div>
+
+            <div className={`${cardClass} overflow-hidden`}>
+              <div className="flex items-center justify-between border-b border-sky-900/70 p-4"><h2 className="font-black text-white">Policy Matrix</h2><button onClick={addPolicy} className="rounded-xl bg-cyan-300 px-3 py-2 text-xs font-black text-slate-950" type="button">+ Add Policy</button></div>
+              <div className="grid gap-3 p-4 md:grid-cols-3">
+                <Field label="Source"><select className={inputClass} value={policyDraft.sourceVlanUid} onChange={updatePolicyDraft("sourceVlanUid")}>{vlans.map((vlan) => <option key={vlan.uid} value={vlan.uid}>{getVlanName(vlan)}</option>)}</select></Field>
+                <Field label="Destination"><select className={inputClass} value={policyDraft.destination} onChange={updatePolicyDraft("destination")}><option value={internetDestination}>Internet</option>{vlans.map((vlan) => <option key={vlan.uid} value={vlan.uid}>{getVlanName(vlan)}</option>)}</select></Field>
+                <Field label="Service"><select className={inputClass} value={policyDraft.service} onChange={updatePolicyDraft("service")}>{firewallServices.map((service) => <option key={service}>{service}</option>)}</select></Field>
+                <Field label="Action"><select className={inputClass} value={policyDraft.action} onChange={updatePolicyDraft("action")}><option value="ACCEPT">ALLOW</option><option value="DENY">DENY</option></select></Field>
+                <Field label="NAT"><select className={inputClass} value={policyDraft.nat} onChange={updatePolicyDraft("nat")}><option value="AUTO">AUTO</option><option value="ENABLE">Enable</option><option value="DISABLE">Disable</option></select></Field>
+              </div>
+              <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-950/70 text-slate-400"><tr><th className="px-4 py-3">ID</th><th>Source</th><th>Destination</th><th>Service</th><th>Action</th><th>NAT</th><th>Status</th></tr></thead><tbody className="divide-y divide-sky-950/70">{policies.map((policy, index) => <tr key={policy.uid}><td className="px-4 py-3">{index + 1}</td><td>{getVlanName(vlans.find((vlan) => vlan.uid === policy.sourceVlanUid))}</td><td>{getDestinationName(policy.destination, vlans)}</td><td>{policy.service}</td><td><span className={`rounded-full px-2 py-1 text-xs font-bold ${policy.action === 'ACCEPT' ? 'bg-emerald-400/10 text-emerald-300' : 'bg-red-400/10 text-red-300'}`}>{policy.action === 'ACCEPT' ? 'ALLOW' : 'DENY'}</span></td><td><span className={`rounded-full px-2 py-1 text-xs font-bold ${getEffectiveNat(policy) === 'enable' ? 'bg-emerald-400/10 text-emerald-300' : 'bg-red-400/10 text-red-300'}`}>{getNatLabel(policy)}</span></td><td><span className="text-emerald-300">Ready</span></td></tr>)}</tbody></table></div>
+            </div>
+          </section>
+
+          <section className={`${cardClass} overflow-hidden`}>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sky-900/70 p-4">
+              <div><p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-300">Generated CLI</p><h2 className="text-xl font-black text-white">FortiGate Configuration Terminal</h2></div>
+              <div className="flex flex-wrap gap-2"><button onClick={copyConfig} className="rounded-xl bg-cyan-300 px-3 py-2 text-sm font-bold text-slate-950" type="button">{copyLabel}</button><button onClick={exportTxt} className="rounded-xl border border-sky-700 px-3 py-2 text-sm font-bold" type="button">Download TXT</button><button onClick={exportPdf} className="rounded-xl border border-sky-700 px-3 py-2 text-sm font-bold" type="button">Download PDF</button><button onClick={exportReport} className="rounded-xl border border-sky-700 px-3 py-2 text-sm font-bold" type="button">Implementation Report</button></div>
+            </div>
+            <pre className="max-h-[560px] overflow-auto bg-[#020817] p-5 font-mono text-sm leading-6">{generatedConfig.split("\n").map(renderCliLine)}</pre>
+          </section>
         </div>
       </div>
     </main>
