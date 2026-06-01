@@ -4,9 +4,10 @@ import { ChangeEvent, useMemo, useState } from "react";
 
 type WanConnectionType = "static" | "dhcp" | "pppoe";
 type FortiOsVersion = "7.0" | "7.2" | "7.4" | "7.6";
+type FortiGateModel = "40F" | "60F" | "70F" | "70G" | "80F" | "90G" | "100F" | "100G" | "200F" | "400F" | "Custom";
 
 type BasicFortigateForm = {
-  fortigateModel: string;
+  fortigateModel: FortiGateModel;
   fortiOsVersion: FortiOsVersion;
   wanInterface: string;
   wanConnectionType: WanConnectionType;
@@ -70,10 +71,11 @@ const inputClass =
 const labelClass = "mb-2 block text-sm font-semibold text-slate-100";
 const helperClass = "mt-2 block text-xs leading-5 text-slate-400";
 const internetDestination = "internet";
+const fortigateModels: FortiGateModel[] = ["40F", "60F", "70F", "70G", "80F", "90G", "100F", "100G", "200F", "400F", "Custom"];
 const firewallServices: Service[] = ["ALL", "HTTP", "HTTPS", "DNS", "RDP", "PING"];
 
 const defaultForm: BasicFortigateForm = {
-  fortigateModel: "FortiGate 60F",
+  fortigateModel: "60F",
   fortiOsVersion: "7.4",
   wanInterface: "wan1",
   wanConnectionType: "static",
@@ -155,7 +157,7 @@ const defaultPolicyDraft: PolicyDraft = {
 };
 
 const stepNavigation: StepItem[] = [
-  { id: "compatibility", label: "Version", detail: "Model + FortiOS" },
+  { id: "compatibility", label: "Profile", detail: "Model + FortiOS" },
   { id: "wan", label: "1 WAN", detail: "Internet uplink" },
   { id: "lan", label: "2 LAN", detail: "Internal gateway" },
   { id: "vlans", label: "3 VLAN", detail: "Multi VLAN + DHCP" },
@@ -236,6 +238,26 @@ function getWanModeLabel(type: WanConnectionType) {
   if (type === "dhcp") return "DHCP จากผู้ให้บริการ";
   if (type === "pppoe") return "PPPoE ด้วย Username/Password";
   return "Static IP จากผู้ให้บริการ";
+}
+
+function getSyntaxProfile(version: FortiOsVersion) {
+  const sharedProfile = {
+    coreSyntax: "Basic WAN/LAN/DHCP/Firewall Policy/NAT syntax compatible",
+    futureScopes: ["VPN", "SD-WAN", "Security Profile"],
+  };
+
+  const versionNotes: Record<FortiOsVersion, string[]> = {
+    "7.0": ["ใช้เป็น baseline สำหรับงาน First Implement", "ตรวจสอบ SSL VPN และ Security Profile syntax หากเพิ่มในอนาคต"],
+    "7.2": ["ยังคงใช้ basic interface, DHCP, policy และ NAT syntax ชุดเดียวกัน", "เตรียมแยก logic สำหรับ SD-WAN syntax ในอนาคต"],
+    "7.4": ["เหมาะกับ template ปัจจุบันสำหรับ basic WAN/LAN/DHCP/Policy/NAT", "ควรตรวจสอบ build จริงก่อนใช้คำสั่ง VPN เพิ่มเติม"],
+    "7.6": ["รองรับโครงสร้าง profile สำหรับเปลี่ยน syntax ตาม version ในอนาคต", "ตรวจสอบ release notes ก่อนใช้ Security Profile หรือ VPN ขั้นสูง"],
+  };
+
+  return {
+    version,
+    ...sharedProfile,
+    notes: versionNotes[version],
+  };
 }
 
 function getGeneratedSectionCount(enableSslVpn: boolean, vlans: Vlan[], policies: PolicyRule[]) {
@@ -386,7 +408,7 @@ function buildVpnCli(form: BasicFortigateForm) {
 }
 
 function buildConfig(form: BasicFortigateForm, vlans: Vlan[], policies: PolicyRule[]) {
-  return `# FortiRule Builder - Basic FortiGate First Implementation\n# FortiGate Model: ${form.fortigateModel}\n# FortiOS Version: ${form.fortiOsVersion}\n# คอนฟิกนี้สร้างจากหน้าเว็บฝั่ง Frontend เท่านั้น ไม่มีการเชื่อมต่อ FortiGate จริง\n# ตรวจสอบ Syntax กับ FortiOS Version จริงก่อนนำ CLI ไปใช้งาน\n\n# ส่วนที่ 1: WAN Internet Setup\n# คำอธิบาย: ตั้งค่า ${form.wanInterface} เป็นขาออกอินเทอร์เน็ตแบบ ${getWanModeLabel(form.wanConnectionType)}\n${buildWanCli(form)}\n\n# ส่วนที่ 2: LAN Setup\n# คำอธิบาย: ตั้งค่า ${form.lanInterface} เป็น Gateway ของเครือข่ายภายใน\nconfig system interface\n    edit "${form.lanInterface}"\n        set role lan\n        set mode static\n        set ip ${form.lanIpAddress} ${form.lanSubnetMask}\n        set allowaccess ping https ssh\n    next\nend\n\n# ส่วนที่ 3: DHCP Server\n# คำอธิบาย: แจก IP ให้ Client ใน LAN พร้อม Gateway และ DNS\nconfig system dhcp server\n    edit 1\n        set interface "${form.lanInterface}"\n        set default-gateway ${form.dhcpGateway}\n        set netmask ${form.lanSubnetMask}\n        set dns-service specify\n        set dns-server1 ${form.dnsPrimary}\n        set dns-server2 ${form.dnsSecondary}\n        config ip-range\n            edit 1\n                set start-ip ${form.dhcpStartIp}\n                set end-ip ${form.dhcpEndIp}\n            next\n        end\n    next\nend\n\n# ส่วนที่ 4: Multi VLAN และ DHCP ต่อ VLAN
+  return `# FortiRule Builder - Basic FortiGate First Implementation\n# FortiGate Model: ${form.fortigateModel}\n# FortiOS Version: ${form.fortiOsVersion}\n# คอนฟิกนี้สร้างจากหน้าเว็บฝั่ง Frontend เท่านั้น ไม่มีการเชื่อมต่อ FortiGate จริง\n# Syntax Profile: ${getSyntaxProfile(form.fortiOsVersion).coreSyntax}\n# Version Notes: ${getSyntaxProfile(form.fortiOsVersion).notes.join(" | ")}\n# ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำไปใช้กับอุปกรณ์จริง\n\n# ส่วนที่ 1: WAN Internet Setup\n# คำอธิบาย: ตั้งค่า ${form.wanInterface} เป็นขาออกอินเทอร์เน็ตแบบ ${getWanModeLabel(form.wanConnectionType)}\n${buildWanCli(form)}\n\n# ส่วนที่ 2: LAN Setup\n# คำอธิบาย: ตั้งค่า ${form.lanInterface} เป็น Gateway ของเครือข่ายภายใน\nconfig system interface\n    edit "${form.lanInterface}"\n        set role lan\n        set mode static\n        set ip ${form.lanIpAddress} ${form.lanSubnetMask}\n        set allowaccess ping https ssh\n    next\nend\n\n# ส่วนที่ 3: DHCP Server\n# คำอธิบาย: แจก IP ให้ Client ใน LAN พร้อม Gateway และ DNS\nconfig system dhcp server\n    edit 1\n        set interface "${form.lanInterface}"\n        set default-gateway ${form.dhcpGateway}\n        set netmask ${form.lanSubnetMask}\n        set dns-service specify\n        set dns-server1 ${form.dnsPrimary}\n        set dns-server2 ${form.dnsSecondary}\n        config ip-range\n            edit 1\n                set start-ip ${form.dhcpStartIp}\n                set end-ip ${form.dhcpEndIp}\n            next\n        end\n    next\nend\n\n# ส่วนที่ 4: Multi VLAN และ DHCP ต่อ VLAN
 # คำอธิบาย: สร้าง VLAN หลายวงพร้อม DHCP แยกต่อ VLAN ตามตารางด้านซ้าย
 ${buildVlanAndDhcpCli(vlans, form.dnsPrimary, form.dnsSecondary)}
 
@@ -518,10 +540,12 @@ export default function Home() {
           </aside>
 
           <div className="space-y-6">
-            <ModuleCard id="compatibility" icon="🧬" title="FortiOS Version Compatibility" description="ระบุรุ่น FortiGate และ FortiOS Version เพื่อใส่ข้อมูลอ้างอิงใน CLI และช่วยเตือนเรื่อง Syntax ก่อนนำไปใช้งานจริง">
+            <ModuleCard id="compatibility" icon="🧬" title="FortiGate Model / FortiOS Version" description="เลือก Profile ของรุ่น FortiGate และ FortiOS Version เพื่อใส่ข้อมูลอ้างอิงใน CLI และเตรียมโครงสร้าง Syntax ตาม Version">
               <div className="grid gap-5 md:grid-cols-2">
-                <Field label="FortiGate Model" hint="ตัวอย่าง: FortiGate 60F, 100F, 200F หรือรุ่นจริงของอุปกรณ์">
-                  <input className={inputClass} value={form.fortigateModel} onChange={updateField("fortigateModel")} placeholder="FortiGate 60F" />
+                <Field label="FortiGate Model" hint="เลือกรุ่นที่ใช้จริง หรือเลือก Custom ถ้าไม่อยู่ในรายการ">
+                  <select className={inputClass} value={form.fortigateModel} onChange={updateField("fortigateModel")}>
+                    {fortigateModels.map((model) => <option key={model} value={model}>{model}</option>)}
+                  </select>
                 </Field>
                 <Field label="FortiOS Version" hint="เลือก Version เป้าหมายเพื่อบันทึกไว้ใน CLI comments">
                   <select className={inputClass} value={form.fortiOsVersion} onChange={updateField("fortiOsVersion")}>
@@ -532,8 +556,12 @@ export default function Home() {
                   </select>
                 </Field>
               </div>
-              <div className="mt-5 rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm font-semibold leading-6 text-amber-100">
-                ตรวจสอบ Syntax กับ FortiOS Version จริงก่อนนำ CLI ไปใช้งาน
+              <div className="mt-5 rounded-2xl border border-sky-300/30 bg-sky-300/10 p-4 text-sm leading-6 text-sky-100">
+                <p className="font-bold">Syntax profile: {getSyntaxProfile(form.fortiOsVersion).coreSyntax}</p>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sky-100/80">
+                  {getSyntaxProfile(form.fortiOsVersion).notes.map((note) => <li key={note}>{note}</li>)}
+                </ul>
+                <p className="mt-3 font-semibold text-amber-100">ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำไปใช้กับอุปกรณ์จริง</p>
               </div>
             </ModuleCard>
 
@@ -787,7 +815,7 @@ export default function Home() {
                   Generate FortiGate CLI
                 </button>
                 <p className="rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-sm leading-6 text-amber-100">
-                  ตรวจสอบ Syntax กับ FortiOS Version จริงก่อนนำ CLI ไปใช้งาน
+                  ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำไปใช้กับอุปกรณ์จริง
                 </p>
               </div>
             </ModuleCard>
@@ -821,7 +849,7 @@ export default function Home() {
                 <div>
                   <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-200">Terminal Output</p>
                   <h2 className="mt-1 text-2xl font-black text-white">คอนฟิก CLI สำหรับ FortiGate</h2>
-                  <p className="mt-1 text-sm text-amber-100">⚠️ ตรวจสอบ Syntax กับ FortiOS Version จริงก่อนนำ CLI ไปใช้งาน</p>
+                  <p className="mt-1 text-sm text-amber-100">⚠️ ตรวจสอบ Syntax กับ FortiOS build จริงก่อนนำไปใช้กับอุปกรณ์จริง</p>
                 </div>
                 <div className="flex gap-2">
                   <button type="button" onClick={copyConfig} disabled={!displayedConfig} className="rounded-xl bg-cyan-300 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-40">
