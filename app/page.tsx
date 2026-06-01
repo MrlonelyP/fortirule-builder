@@ -106,7 +106,7 @@ const emptyPolicyDraft: PolicyDraft = {
   destination: internetDestination,
   service: "ALL",
   action: "ACCEPT",
-  nat: "AUTO",
+  nat: "ENABLE",
 };
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
@@ -145,10 +145,22 @@ function getDestinationName(destination: string, vlans: Vlan[]) {
   return getVlanName(vlans.find((vlan) => vlan.uid === destination));
 }
 
+function getDefaultNatMode(destination: string): NatMode {
+  return destination === internetDestination ? "ENABLE" : "DISABLE";
+}
+
 function getEffectiveNat(policy: PolicyRule | PolicyDraft) {
   if (policy.nat === "ENABLE") return "enable";
   if (policy.nat === "DISABLE") return "disable";
-  return policy.destination === internetDestination ? "enable" : "disable";
+  return getDefaultNatMode(policy.destination) === "ENABLE" ? "enable" : "disable";
+}
+
+function getNatThaiLabel(policy: PolicyRule | PolicyDraft) {
+  if (policy.nat === "AUTO") {
+    return getEffectiveNat(policy) === "enable" ? "อัตโนมัติ: เปิด" : "อัตโนมัติ: ปิด";
+  }
+
+  return policy.nat === "ENABLE" ? "เปิด" : "ปิด";
 }
 
 function explainPolicy(policy: PolicyRule, index: number, vlans: Vlan[]) {
@@ -156,8 +168,12 @@ function explainPolicy(policy: PolicyRule, index: number, vlans: Vlan[]) {
   const destination = getDestinationName(policy.destination, vlans);
   const natText = getEffectiveNat(policy) === "enable" ? "เปิด NAT" : "ปิด NAT";
   const actionText = policy.action === "ACCEPT" ? "อนุญาต" : "ปฏิเสธ";
+  const natReason =
+    policy.destination === internetDestination
+      ? "ปลายทางเป็นอินเทอร์เน็ต จึงควรเปิด NAT"
+      : "ปลายทางเป็น VLAN ภายใน จึงควรปิด NAT";
 
-  return `# นโยบาย ${index}: ${policy.name}\n# คำอธิบาย: ${actionText} ทราฟฟิกจาก ${source} ไปยัง ${destination} เฉพาะบริการ ${policy.service} และ ${natText}`;
+  return `# นโยบาย ${index}: ${policy.name}\n# คำอธิบาย: ${actionText} ทราฟฟิกจาก ${source} ไปยัง ${destination} เฉพาะบริการ ${policy.service} และ ${natText} (${natReason})`;
 }
 
 function buildConfig(vlans: Vlan[], policies: PolicyRule[]) {
@@ -237,7 +253,13 @@ export default function Home() {
 
   const updatePolicyDraft = (key: keyof PolicyDraft) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const value = event.target.value;
-    setPolicyDraft((current) => ({ ...current, [key]: value }));
+    setPolicyDraft((current) => {
+      if (key === "destination") {
+        return { ...current, destination: value, nat: getDefaultNatMode(value) };
+      }
+
+      return { ...current, [key]: value };
+    });
   };
 
   const addVlan = (event: FormEvent<HTMLFormElement>) => {
@@ -256,13 +278,18 @@ export default function Home() {
       ...current,
       sourceVlanUid: current.sourceVlanUid === uid ? remainingVlans[0]?.uid || "" : current.sourceVlanUid,
       destination: current.destination === uid ? internetDestination : current.destination,
+      nat: current.destination === uid ? getDefaultNatMode(internetDestination) : current.nat,
     }));
   };
 
   const addPolicy = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setPolicies((current) => [...current, { ...policyDraft, uid: makeUid("policy") }]);
-    setPolicyDraft((current) => ({ ...current, name: "นโยบายใหม่" }));
+    setPolicyDraft((current) => ({
+      ...current,
+      name: "นโยบายใหม่",
+      nat: getDefaultNatMode(current.destination),
+    }));
   };
 
   const deletePolicy = (uid: string) => {
@@ -418,12 +445,12 @@ export default function Home() {
                 </Field>
                 <Field
                   label="สถานะ NAT"
-                  hint={`โหมดอัตโนมัติจะ${policyDraft.destination === internetDestination ? "เปิด NAT เมื่อปลายทางเป็นอินเทอร์เน็ต" : "ปิด NAT เมื่อปลายทางเป็น VLAN ภายใน"}`}
+                  hint={`ค่าเริ่มต้นตอนเลือกปลายทางคือ ${getDefaultNatMode(policyDraft.destination) === "ENABLE" ? "เปิด NAT" : "ปิด NAT"} และโหมดอัตโนมัติจะใช้ค่าเดียวกันนี้`}
                 >
                   <select className={inputClass} value={policyDraft.nat} onChange={updatePolicyDraft("nat")}>
-                    <option value="AUTO">อัตโนมัติ</option>
-                    <option value="ENABLE">เปิด</option>
-                    <option value="DISABLE">ปิด</option>
+                    <option value="AUTO">อัตโนมัติ (ตามปลายทาง)</option>
+                    <option value="ENABLE">เปิด NAT</option>
+                    <option value="DISABLE">ปิด NAT</option>
                   </select>
                 </Field>
                 <div className="md:col-span-2">
@@ -454,7 +481,7 @@ export default function Home() {
                         <td className="px-4 py-3">{getDestinationName(policy.destination, vlans)}</td>
                         <td className="px-4 py-3">{policy.service}</td>
                         <td className="px-4 py-3">{policy.action === "ACCEPT" ? "อนุญาต" : "ปฏิเสธ"}</td>
-                        <td className="px-4 py-3">{getEffectiveNat(policy) === "enable" ? "เปิด" : "ปิด"}</td>
+                        <td className="px-4 py-3">{getNatThaiLabel(policy)}</td>
                         <td className="px-4 py-3">
                           <button className="rounded-lg border border-red-300/30 px-3 py-2 text-xs font-bold text-red-100 hover:bg-red-500/20" onClick={() => deletePolicy(policy.uid)} type="button">
                             ลบ
