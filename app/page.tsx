@@ -3,8 +3,11 @@
 import { ChangeEvent, useMemo, useState } from "react";
 
 type WanConnectionType = "static" | "dhcp" | "pppoe";
+type FortiOsVersion = "7.0" | "7.2" | "7.4" | "7.6";
 
 type BasicFortigateForm = {
+  fortigateModel: string;
+  fortiOsVersion: FortiOsVersion;
   wanInterface: string;
   wanConnectionType: WanConnectionType;
   wanIpAddress: string;
@@ -70,6 +73,8 @@ const internetDestination = "internet";
 const firewallServices: Service[] = ["ALL", "HTTP", "HTTPS", "DNS", "RDP", "PING"];
 
 const defaultForm: BasicFortigateForm = {
+  fortigateModel: "FortiGate 60F",
+  fortiOsVersion: "7.4",
   wanInterface: "wan1",
   wanConnectionType: "static",
   wanIpAddress: "203.0.113.10",
@@ -150,6 +155,7 @@ const defaultPolicyDraft: PolicyDraft = {
 };
 
 const stepNavigation: StepItem[] = [
+  { id: "compatibility", label: "Version", detail: "Model + FortiOS" },
   { id: "wan", label: "1 WAN", detail: "Internet uplink" },
   { id: "lan", label: "2 LAN", detail: "Internal gateway" },
   { id: "vlans", label: "3 VLAN", detail: "Multi VLAN + DHCP" },
@@ -162,9 +168,11 @@ const stepNavigation: StepItem[] = [
 ];
 
 const firmwareChecklist = [
-  "ตรวจสอบเวอร์ชัน Firmware ปัจจุบันก่อนเริ่มงาน",
-  "อัปเกรดเป็นเวอร์ชัน Stable ที่เหมาะสมกับรุ่นและนโยบายขององค์กร",
-  "Backup Configuration หลังติดตั้งและตรวจสอบระบบเสร็จ",
+  "Backup config before firmware update",
+  "Check Fortinet upgrade path",
+  "Upgrade to suitable stable version",
+  "Reboot and verify system status",
+  "Backup final config after implementation",
 ];
 
 const testingChecklist = [
@@ -378,7 +386,7 @@ function buildVpnCli(form: BasicFortigateForm) {
 }
 
 function buildConfig(form: BasicFortigateForm, vlans: Vlan[], policies: PolicyRule[]) {
-  return `# FortiRule Builder - Basic FortiGate First Implementation\n# คอนฟิกนี้สร้างจากหน้าเว็บฝั่ง Frontend เท่านั้น ไม่มีการเชื่อมต่อ FortiGate จริง\n# ตรวจสอบค่าอีกครั้งก่อนนำไปใช้กับอุปกรณ์จริง\n\n# ส่วนที่ 1: WAN Internet Setup\n# คำอธิบาย: ตั้งค่า ${form.wanInterface} เป็นขาออกอินเทอร์เน็ตแบบ ${getWanModeLabel(form.wanConnectionType)}\n${buildWanCli(form)}\n\n# ส่วนที่ 2: LAN Setup\n# คำอธิบาย: ตั้งค่า ${form.lanInterface} เป็น Gateway ของเครือข่ายภายใน\nconfig system interface\n    edit "${form.lanInterface}"\n        set role lan\n        set mode static\n        set ip ${form.lanIpAddress} ${form.lanSubnetMask}\n        set allowaccess ping https ssh\n    next\nend\n\n# ส่วนที่ 3: DHCP Server\n# คำอธิบาย: แจก IP ให้ Client ใน LAN พร้อม Gateway และ DNS\nconfig system dhcp server\n    edit 1\n        set interface "${form.lanInterface}"\n        set default-gateway ${form.dhcpGateway}\n        set netmask ${form.lanSubnetMask}\n        set dns-service specify\n        set dns-server1 ${form.dnsPrimary}\n        set dns-server2 ${form.dnsSecondary}\n        config ip-range\n            edit 1\n                set start-ip ${form.dhcpStartIp}\n                set end-ip ${form.dhcpEndIp}\n            next\n        end\n    next\nend\n\n# ส่วนที่ 4: Multi VLAN และ DHCP ต่อ VLAN
+  return `# FortiRule Builder - Basic FortiGate First Implementation\n# FortiGate Model: ${form.fortigateModel}\n# FortiOS Version: ${form.fortiOsVersion}\n# คอนฟิกนี้สร้างจากหน้าเว็บฝั่ง Frontend เท่านั้น ไม่มีการเชื่อมต่อ FortiGate จริง\n# ตรวจสอบ Syntax กับ FortiOS Version จริงก่อนนำ CLI ไปใช้งาน\n\n# ส่วนที่ 1: WAN Internet Setup\n# คำอธิบาย: ตั้งค่า ${form.wanInterface} เป็นขาออกอินเทอร์เน็ตแบบ ${getWanModeLabel(form.wanConnectionType)}\n${buildWanCli(form)}\n\n# ส่วนที่ 2: LAN Setup\n# คำอธิบาย: ตั้งค่า ${form.lanInterface} เป็น Gateway ของเครือข่ายภายใน\nconfig system interface\n    edit "${form.lanInterface}"\n        set role lan\n        set mode static\n        set ip ${form.lanIpAddress} ${form.lanSubnetMask}\n        set allowaccess ping https ssh\n    next\nend\n\n# ส่วนที่ 3: DHCP Server\n# คำอธิบาย: แจก IP ให้ Client ใน LAN พร้อม Gateway และ DNS\nconfig system dhcp server\n    edit 1\n        set interface "${form.lanInterface}"\n        set default-gateway ${form.dhcpGateway}\n        set netmask ${form.lanSubnetMask}\n        set dns-service specify\n        set dns-server1 ${form.dnsPrimary}\n        set dns-server2 ${form.dnsSecondary}\n        config ip-range\n            edit 1\n                set start-ip ${form.dhcpStartIp}\n                set end-ip ${form.dhcpEndIp}\n            next\n        end\n    next\nend\n\n# ส่วนที่ 4: Multi VLAN และ DHCP ต่อ VLAN
 # คำอธิบาย: สร้าง VLAN หลายวงพร้อม DHCP แยกต่อ VLAN ตามตารางด้านซ้าย
 ${buildVlanAndDhcpCli(vlans, form.dnsPrimary, form.dnsSecondary)}
 
@@ -510,6 +518,25 @@ export default function Home() {
           </aside>
 
           <div className="space-y-6">
+            <ModuleCard id="compatibility" icon="🧬" title="FortiOS Version Compatibility" description="ระบุรุ่น FortiGate และ FortiOS Version เพื่อใส่ข้อมูลอ้างอิงใน CLI และช่วยเตือนเรื่อง Syntax ก่อนนำไปใช้งานจริง">
+              <div className="grid gap-5 md:grid-cols-2">
+                <Field label="FortiGate Model" hint="ตัวอย่าง: FortiGate 60F, 100F, 200F หรือรุ่นจริงของอุปกรณ์">
+                  <input className={inputClass} value={form.fortigateModel} onChange={updateField("fortigateModel")} placeholder="FortiGate 60F" />
+                </Field>
+                <Field label="FortiOS Version" hint="เลือก Version เป้าหมายเพื่อบันทึกไว้ใน CLI comments">
+                  <select className={inputClass} value={form.fortiOsVersion} onChange={updateField("fortiOsVersion")}>
+                    <option value="7.0">7.0</option>
+                    <option value="7.2">7.2</option>
+                    <option value="7.4">7.4</option>
+                    <option value="7.6">7.6</option>
+                  </select>
+                </Field>
+              </div>
+              <div className="mt-5 rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm font-semibold leading-6 text-amber-100">
+                ตรวจสอบ Syntax กับ FortiOS Version จริงก่อนนำ CLI ไปใช้งาน
+              </div>
+            </ModuleCard>
+
             <ModuleCard id="wan" icon="🌐" title="1. WAN Internet Setup" description="กรอกข้อมูลขาออกอินเทอร์เน็ตจาก ISP เลือก Static IP, DHCP หรือ PPPoE ตามวงจรจริง">
               <div className="grid gap-5 md:grid-cols-2">
                 <Field label="WAN interface" hint="ตัวอย่าง: wan1, port1 หรือชื่อ Interface ที่ต่อกับ ISP">
@@ -741,10 +768,10 @@ export default function Home() {
               )}
             </ModuleCard>
 
-            <ModuleCard id="checklist" icon="✅" title="8. Firmware และ Testing Checklist" description="Checklist สำหรับ Engineer มือใหม่ ไม่มีคำสั่ง Upgrade Firmware จริงเพื่อความปลอดภัย">
+            <ModuleCard id="checklist" icon="✅" title="8. Firmware และ Testing Checklist" description="Checklist สำหรับ Firmware และการทดสอบ ไม่มีคำสั่ง Upgrade Firmware จริงเพื่อความปลอดภัย">
               <div className="grid gap-5 lg:grid-cols-2">
                 <div>
-                  <h3 className="mb-3 font-bold text-cyan-100">Firmware และ Backup</h3>
+                  <h3 className="mb-3 font-bold text-cyan-100">Firmware Checklist</h3>
                   <Checklist items={firmwareChecklist} />
                 </div>
                 <div>
@@ -760,7 +787,7 @@ export default function Home() {
                   Generate FortiGate CLI
                 </button>
                 <p className="rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-sm leading-6 text-amber-100">
-                  ตรวจสอบค่าอีกครั้งก่อนนำไปใช้กับอุปกรณ์จริง
+                  ตรวจสอบ Syntax กับ FortiOS Version จริงก่อนนำ CLI ไปใช้งาน
                 </p>
               </div>
             </ModuleCard>
@@ -776,6 +803,8 @@ export default function Home() {
                 <span className="rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-1 text-xs font-bold text-cyan-100">{getGeneratedSectionCount(form.enableSslVpn, vlans, policies)} sections</span>
               </div>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+                <SummaryTile label="FortiGate model" value={form.fortigateModel} />
+                <SummaryTile label="FortiOS version" value={form.fortiOsVersion} />
                 <SummaryTile label="WAN interface" value={`${form.wanInterface} / ${getWanModeLabel(form.wanConnectionType)}`} />
                 <SummaryTile label="LAN subnet" value={`${form.lanIpAddress} ${form.lanSubnetMask}`} />
                 <SummaryTile label="DHCP range" value={`${form.dhcpStartIp} - ${form.dhcpEndIp}`} />
@@ -792,7 +821,7 @@ export default function Home() {
                 <div>
                   <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-200">Terminal Output</p>
                   <h2 className="mt-1 text-2xl font-black text-white">คอนฟิก CLI สำหรับ FortiGate</h2>
-                  <p className="mt-1 text-sm text-amber-100">⚠️ ตรวจสอบค่าอีกครั้งก่อนนำไปใช้กับอุปกรณ์จริง</p>
+                  <p className="mt-1 text-sm text-amber-100">⚠️ ตรวจสอบ Syntax กับ FortiOS Version จริงก่อนนำ CLI ไปใช้งาน</p>
                 </div>
                 <div className="flex gap-2">
                   <button type="button" onClick={copyConfig} disabled={!displayedConfig} className="rounded-xl bg-cyan-300 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-40">
