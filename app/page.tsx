@@ -33,10 +33,41 @@ type StepItem = {
   detail: string;
 };
 
+type Vlan = {
+  uid: string;
+  name: string;
+  vlanId: string;
+  interfaceName: string;
+  gatewayIp: string;
+  subnetMask: string;
+  dhcpStartIp: string;
+  dhcpEndIp: string;
+  allowInternet: boolean;
+};
+
+type Service = "ALL" | "HTTP" | "HTTPS" | "DNS" | "RDP" | "PING";
+type Action = "ACCEPT" | "DENY";
+type NatMode = "AUTO" | "ENABLE" | "DISABLE";
+
+type PolicyRule = {
+  uid: string;
+  name: string;
+  sourceVlanUid: string;
+  destination: string;
+  service: Service;
+  action: Action;
+  nat: NatMode;
+};
+
+type VlanDraft = Omit<Vlan, "uid">;
+type PolicyDraft = Omit<PolicyRule, "uid">;
+
 const inputClass =
   "w-full rounded-2xl border border-slate-700/80 bg-slate-950/80 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 hover:border-cyan-500/50 focus:border-cyan-300 focus:ring-4 focus:ring-cyan-300/10";
 const labelClass = "mb-2 block text-sm font-semibold text-slate-100";
 const helperClass = "mt-2 block text-xs leading-5 text-slate-400";
+const internetDestination = "internet";
+const firewallServices: Service[] = ["ALL", "HTTP", "HTTPS", "DNS", "RDP", "PING"];
 
 const defaultForm: BasicFortigateForm = {
   wanInterface: "wan1",
@@ -61,15 +92,73 @@ const defaultForm: BasicFortigateForm = {
   vpnPortalName: "full-access",
 };
 
+const defaultVlans: Vlan[] = [
+  {
+    uid: "vlan-10",
+    name: "VLAN10_USERS",
+    vlanId: "10",
+    interfaceName: "port2",
+    gatewayIp: "192.168.10.1",
+    subnetMask: "255.255.255.0",
+    dhcpStartIp: "192.168.10.100",
+    dhcpEndIp: "192.168.10.200",
+    allowInternet: true,
+  },
+  {
+    uid: "vlan-20",
+    name: "VLAN20_SERVERS",
+    vlanId: "20",
+    interfaceName: "port2",
+    gatewayIp: "192.168.20.1",
+    subnetMask: "255.255.255.0",
+    dhcpStartIp: "192.168.20.50",
+    dhcpEndIp: "192.168.20.120",
+    allowInternet: false,
+  },
+];
+
+const defaultVlanDraft: VlanDraft = {
+  name: "VLAN30_GUEST",
+  vlanId: "30",
+  interfaceName: "port2",
+  gatewayIp: "192.168.30.1",
+  subnetMask: "255.255.255.0",
+  dhcpStartIp: "192.168.30.100",
+  dhcpEndIp: "192.168.30.200",
+  allowInternet: true,
+};
+
+const defaultPolicies: PolicyRule[] = [
+  {
+    uid: "policy-vlan10-internet",
+    name: "Users ออกอินเทอร์เน็ต",
+    sourceVlanUid: "vlan-10",
+    destination: internetDestination,
+    service: "ALL",
+    action: "ACCEPT",
+    nat: "AUTO",
+  },
+];
+
+const defaultPolicyDraft: PolicyDraft = {
+  name: "นโยบายใหม่",
+  sourceVlanUid: "vlan-10",
+  destination: internetDestination,
+  service: "ALL",
+  action: "ACCEPT",
+  nat: "AUTO",
+};
+
 const stepNavigation: StepItem[] = [
   { id: "wan", label: "1 WAN", detail: "Internet uplink" },
   { id: "lan", label: "2 LAN", detail: "Internal gateway" },
-  { id: "dhcp", label: "3 DHCP", detail: "Client IP service" },
-  { id: "policy", label: "4 Firewall Policy", detail: "LAN to Internet" },
-  { id: "nat-dns", label: "5 NAT / DNS / Gateway", detail: "Route and resolver" },
-  { id: "vpn", label: "6 VPN", detail: "Optional SSL VPN" },
-  { id: "checklist", label: "7 Checklist", detail: "Firmware and testing" },
-  { id: "export", label: "8 Export Config", detail: "Copy or .txt" },
+  { id: "vlans", label: "3 VLAN", detail: "Multi VLAN + DHCP" },
+  { id: "dhcp", label: "4 DHCP", detail: "Client IP service" },
+  { id: "policy", label: "5 Firewall Policy", detail: "Policy Builder" },
+  { id: "nat-dns", label: "6 NAT / DNS / Gateway", detail: "Route and NAT" },
+  { id: "vpn", label: "7 VPN", detail: "Optional SSL VPN" },
+  { id: "checklist", label: "8 Checklist", detail: "Firmware and testing" },
+  { id: "export", label: "9 Export Config", detail: "Copy or .txt" },
 ];
 
 const firmwareChecklist = [
@@ -141,8 +230,107 @@ function getWanModeLabel(type: WanConnectionType) {
   return "Static IP จากผู้ให้บริการ";
 }
 
-function getGeneratedSectionCount(enableSslVpn: boolean) {
-  return enableSslVpn ? 8 : 7;
+function getGeneratedSectionCount(enableSslVpn: boolean, vlans: Vlan[], policies: PolicyRule[]) {
+  return 7 + vlans.length * 2 + policies.length + (enableSslVpn ? 1 : 0);
+}
+
+function makeUid(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function getVlanName(vlan?: Vlan) {
+  if (!vlan) return "ไม่พบ VLAN";
+  return vlan.name.trim() || `VLAN${vlan.vlanId}`;
+}
+
+function getDestinationName(destination: string, vlans: Vlan[]) {
+  if (destination === internetDestination) return "อินเทอร์เน็ต";
+  return getVlanName(vlans.find((vlan) => vlan.uid === destination));
+}
+
+function getEffectiveNat(policy: PolicyRule | PolicyDraft) {
+  if (policy.nat === "ENABLE") return "enable";
+  if (policy.nat === "DISABLE") return "disable";
+  return policy.destination === internetDestination ? "enable" : "disable";
+}
+
+function getNatLabel(policy: PolicyRule | PolicyDraft) {
+  if (policy.nat === "AUTO") return getEffectiveNat(policy) === "enable" ? "Auto → Enable" : "Auto → Disable";
+  return policy.nat === "ENABLE" ? "Enable" : "Disable";
+}
+
+function buildVlanAndDhcpCli(vlans: Vlan[], dnsPrimary: string, dnsSecondary: string) {
+  if (vlans.length === 0) {
+    return "# ยังไม่มี VLAN เพิ่ม VLAN อย่างน้อย 1 รายการเพื่อสร้าง CLI ส่วนนี้";
+  }
+
+  return vlans
+    .map((vlan, index) => {
+      const vlanName = getVlanName(vlan);
+      return `# VLAN ${index + 1}: ${vlanName}
+# คำอธิบาย: สร้าง VLAN ID ${vlan.vlanId} บน ${vlan.interfaceName} พร้อม Gateway ${vlan.gatewayIp} และ DHCP ช่วง ${vlan.dhcpStartIp}-${vlan.dhcpEndIp}
+config system interface
+    edit "${vlanName}"
+        set role lan
+        set interface "${vlan.interfaceName}"
+        set vlanid ${vlan.vlanId}
+        set ip ${vlan.gatewayIp} ${vlan.subnetMask}
+        set allowaccess ping https ssh
+    next
+end
+
+config system dhcp server
+    edit 0
+        set interface "${vlanName}"
+        set default-gateway ${vlan.gatewayIp}
+        set netmask ${vlan.subnetMask}
+        set dns-service specify
+        set dns-server1 ${dnsPrimary}
+        set dns-server2 ${dnsSecondary}
+        config ip-range
+            edit 1
+                set start-ip ${vlan.dhcpStartIp}
+                set end-ip ${vlan.dhcpEndIp}
+            next
+        end
+    next
+end`;
+    })
+    .join("\n\n");
+}
+
+function buildPolicyCli(policies: PolicyRule[], vlans: Vlan[], wanInterface: string) {
+  if (policies.length === 0) {
+    return "# ยังไม่มี Firewall Policy เพิ่ม Policy อย่างน้อย 1 รายการเพื่อสร้าง CLI ส่วนนี้";
+  }
+
+  return policies
+    .filter((policy) => vlans.some((vlan) => vlan.uid === policy.sourceVlanUid))
+    .map((policy, index) => {
+      const source = vlans.find((vlan) => vlan.uid === policy.sourceVlanUid);
+      const destination = vlans.find((vlan) => vlan.uid === policy.destination);
+      const destinationInterface = policy.destination === internetDestination ? wanInterface : getVlanName(destination);
+      const actionText = policy.action === "ACCEPT" ? "อนุญาต" : "ปฏิเสธ";
+      const natText = getEffectiveNat(policy) === "enable" ? "เปิด NAT" : "ปิด NAT";
+
+      return `# Policy ${index + 1}: ${policy.name}
+# คำอธิบาย: ${actionText} ทราฟฟิกจาก ${getVlanName(source)} ไปยัง ${getDestinationName(policy.destination, vlans)} บริการ ${policy.service} และ ${natText}
+config firewall policy
+    edit 0
+        set name "${policy.name}"
+        set srcintf "${getVlanName(source)}"
+        set dstintf "${destinationInterface}"
+        set srcaddr "all"
+        set dstaddr "all"
+        set action ${policy.action.toLowerCase()}
+        set schedule "always"
+        set service "${policy.service}"
+        set logtraffic all
+        set nat ${getEffectiveNat(policy)}
+    next
+end`;
+    })
+    .join("\n\n");
 }
 
 function buildWanCli(form: BasicFortigateForm) {
@@ -189,21 +377,74 @@ function buildVpnCli(form: BasicFortigateForm) {
   return `# สร้าง Address สำหรับ LAN ที่อนุญาตให้ผู้ใช้ VPN เข้าถึง\nconfig firewall address\n    edit "LAN_SUBNET_FOR_SSLVPN"\n        set subnet ${form.vpnAllowedLanSubnet}\n    next\nend\n\n# ตั้งค่า SSL VPN Portal แบบพื้นฐาน\nconfig vpn ssl web portal\n    edit "${form.vpnPortalName}"\n        set tunnel-mode enable\n        set split-tunneling enable\n        set ip-pools "${form.vpnTunnelIpPool}"\n    next\nend\n\n# ผูก User Group กับ Portal\nconfig vpn ssl settings\n    set servercert "Fortinet_Factory"\n    set tunnel-ip-pools "${form.vpnTunnelIpPool}"\n    set source-interface "${form.wanInterface}"\n    set source-address "all"\n    set default-portal "${form.vpnPortalName}"\n    config authentication-rule\n        edit 1\n            set groups "${form.vpnUserGroup}"\n            set portal "${form.vpnPortalName}"\n        next\n    end\nend\n\n# Policy ให้ผู้ใช้ SSL VPN เข้าถึง LAN\nconfig firewall policy\n    edit 0\n        set name "SSLVPN_to_LAN"\n        set srcintf "ssl.root"\n        set dstintf "${form.lanInterface}"\n        set srcaddr "all"\n        set dstaddr "LAN_SUBNET_FOR_SSLVPN"\n        set action accept\n        set schedule "always"\n        set service "ALL"\n        set logtraffic all\n        set nat disable\n    next\nend`;
 }
 
-function buildConfig(form: BasicFortigateForm) {
-  return `# FortiRule Builder - Basic FortiGate First Implementation\n# คอนฟิกนี้สร้างจากหน้าเว็บฝั่ง Frontend เท่านั้น ไม่มีการเชื่อมต่อ FortiGate จริง\n# ตรวจสอบค่าอีกครั้งก่อนนำไปใช้กับอุปกรณ์จริง\n\n# ส่วนที่ 1: WAN Internet Setup\n# คำอธิบาย: ตั้งค่า ${form.wanInterface} เป็นขาออกอินเทอร์เน็ตแบบ ${getWanModeLabel(form.wanConnectionType)}\n${buildWanCli(form)}\n\n# ส่วนที่ 2: LAN Setup\n# คำอธิบาย: ตั้งค่า ${form.lanInterface} เป็น Gateway ของเครือข่ายภายใน\nconfig system interface\n    edit "${form.lanInterface}"\n        set role lan\n        set mode static\n        set ip ${form.lanIpAddress} ${form.lanSubnetMask}\n        set allowaccess ping https ssh\n    next\nend\n\n# ส่วนที่ 3: DHCP Server\n# คำอธิบาย: แจก IP ให้ Client ใน LAN พร้อม Gateway และ DNS\nconfig system dhcp server\n    edit 1\n        set interface "${form.lanInterface}"\n        set default-gateway ${form.dhcpGateway}\n        set netmask ${form.lanSubnetMask}\n        set dns-service specify\n        set dns-server1 ${form.dnsPrimary}\n        set dns-server2 ${form.dnsSecondary}\n        config ip-range\n            edit 1\n                set start-ip ${form.dhcpStartIp}\n                set end-ip ${form.dhcpEndIp}\n            next\n        end\n    next\nend\n\n# ส่วนที่ 4: DNS and Default Gateway\n# คำอธิบาย: ตั้งค่า DNS ของ FortiGate และ Default Route สำหรับออกอินเทอร์เน็ต\nconfig system dns\n    set primary ${form.dnsPrimary}\n    set secondary ${form.dnsSecondary}\nend\n\n${buildDefaultRouteCli(form)}\n\n# ส่วนที่ 5: Basic Firewall Policy - LAN to Internet\n# คำอธิบาย: อนุญาตให้ LAN ออก Internet ได้ทุก Service และเปิด NAT เพื่อแปลง IP ภายในเป็น IP ขา WAN\nconfig firewall policy\n    edit 0\n        set name "LAN_to_Internet"\n        set srcintf "${form.lanInterface}"\n        set dstintf "${form.wanInterface}"\n        set srcaddr "all"\n        set dstaddr "all"\n        set action accept\n        set schedule "always"\n        set service "ALL"\n        set logtraffic all\n        set nat enable\n    next\nend\n\n# ส่วนที่ 6: Optional SSL VPN\n# คำอธิบาย: ส่วนนี้ใช้เมื่อเปิด Toggle SSL VPN เท่านั้น และเป็น Template พื้นฐานสำหรับให้ VPN เข้าถึง LAN\n${buildVpnCli(form)}\n\n# ส่วนที่ 7: Firmware and Backup Checklist\n# คำอธิบาย: รายการนี้เป็น Checklist เท่านั้น ไม่สร้างคำสั่งอัปเกรด Firmware จริง\n${firmwareChecklist.map((item, index) => `# [ ] ${index + 1}. ${item}`).join("\n")}\n\n# ส่วนที่ 8: Testing Checklist\n# คำอธิบาย: ใช้ตรวจสอบหลังติดตั้งเสร็จสำหรับ Engineer มือใหม่\n${testingChecklist.map((item, index) => `# [ ] ${index + 1}. ${item}`).join("\n")}`;
+function buildConfig(form: BasicFortigateForm, vlans: Vlan[], policies: PolicyRule[]) {
+  return `# FortiRule Builder - Basic FortiGate First Implementation\n# คอนฟิกนี้สร้างจากหน้าเว็บฝั่ง Frontend เท่านั้น ไม่มีการเชื่อมต่อ FortiGate จริง\n# ตรวจสอบค่าอีกครั้งก่อนนำไปใช้กับอุปกรณ์จริง\n\n# ส่วนที่ 1: WAN Internet Setup\n# คำอธิบาย: ตั้งค่า ${form.wanInterface} เป็นขาออกอินเทอร์เน็ตแบบ ${getWanModeLabel(form.wanConnectionType)}\n${buildWanCli(form)}\n\n# ส่วนที่ 2: LAN Setup\n# คำอธิบาย: ตั้งค่า ${form.lanInterface} เป็น Gateway ของเครือข่ายภายใน\nconfig system interface\n    edit "${form.lanInterface}"\n        set role lan\n        set mode static\n        set ip ${form.lanIpAddress} ${form.lanSubnetMask}\n        set allowaccess ping https ssh\n    next\nend\n\n# ส่วนที่ 3: DHCP Server\n# คำอธิบาย: แจก IP ให้ Client ใน LAN พร้อม Gateway และ DNS\nconfig system dhcp server\n    edit 1\n        set interface "${form.lanInterface}"\n        set default-gateway ${form.dhcpGateway}\n        set netmask ${form.lanSubnetMask}\n        set dns-service specify\n        set dns-server1 ${form.dnsPrimary}\n        set dns-server2 ${form.dnsSecondary}\n        config ip-range\n            edit 1\n                set start-ip ${form.dhcpStartIp}\n                set end-ip ${form.dhcpEndIp}\n            next\n        end\n    next\nend\n\n# ส่วนที่ 4: Multi VLAN และ DHCP ต่อ VLAN
+# คำอธิบาย: สร้าง VLAN หลายวงพร้อม DHCP แยกต่อ VLAN ตามตารางด้านซ้าย
+${buildVlanAndDhcpCli(vlans, form.dnsPrimary, form.dnsSecondary)}
+
+# ส่วนที่ 5: DNS and Default Gateway\n# คำอธิบาย: ตั้งค่า DNS ของ FortiGate และ Default Route สำหรับออกอินเทอร์เน็ต\nconfig system dns\n    set primary ${form.dnsPrimary}\n    set secondary ${form.dnsSecondary}\nend\n\n${buildDefaultRouteCli(form)}\n\n# ส่วนที่ 6: Basic Firewall Policy - LAN to Internet\n# คำอธิบาย: อนุญาตให้ LAN ออก Internet ได้ทุก Service และเปิด NAT เพื่อแปลง IP ภายในเป็น IP ขา WAN\nconfig firewall policy\n    edit 0\n        set name "LAN_to_Internet"\n        set srcintf "${form.lanInterface}"\n        set dstintf "${form.wanInterface}"\n        set srcaddr "all"\n        set dstaddr "all"\n        set action accept\n        set schedule "always"\n        set service "ALL"\n        set logtraffic all\n        set nat enable\n    next\nend\n\n# ส่วนที่ 7: Firewall Policy Builder และ NAT Options\n# คำอธิบาย: สร้าง Policy ระหว่าง VLAN หรือออกอินเทอร์เน็ต พร้อม NAT แบบ Auto/Enable/Disable\n${buildPolicyCli(policies, vlans, form.wanInterface)}\n\n# ส่วนที่ 8: Optional SSL VPN\n# คำอธิบาย: ส่วนนี้ใช้เมื่อเปิด Toggle SSL VPN เท่านั้น และเป็น Template พื้นฐานสำหรับให้ VPN เข้าถึง LAN\n${buildVpnCli(form)}\n\n# ส่วนที่ 9: Firmware and Backup Checklist\n# คำอธิบาย: รายการนี้เป็น Checklist เท่านั้น ไม่สร้างคำสั่งอัปเกรด Firmware จริง\n${firmwareChecklist.map((item, index) => `# [ ] ${index + 1}. ${item}`).join("\n")}\n\n# ส่วนที่ 10: Testing Checklist\n# คำอธิบาย: ใช้ตรวจสอบหลังติดตั้งเสร็จสำหรับ Engineer มือใหม่\n${testingChecklist.map((item, index) => `# [ ] ${index + 1}. ${item}`).join("\n")}`;
 }
 
 export default function Home() {
   const [form, setForm] = useState<BasicFortigateForm>(defaultForm);
+  const [vlans, setVlans] = useState<Vlan[]>(defaultVlans);
+  const [vlanDraft, setVlanDraft] = useState<VlanDraft>(defaultVlanDraft);
+  const [policies, setPolicies] = useState<PolicyRule[]>(defaultPolicies);
+  const [policyDraft, setPolicyDraft] = useState<PolicyDraft>(defaultPolicyDraft);
   const [copyLabel, setCopyLabel] = useState("คัดลอก CLI");
   const [hasGeneratedConfig, setHasGeneratedConfig] = useState(false);
 
-  const generatedConfig = useMemo(() => buildConfig(form), [form]);
+  const generatedConfig = useMemo(() => buildConfig(form, vlans, policies), [form, vlans, policies]);
   const displayedConfig = hasGeneratedConfig ? generatedConfig : "";
 
   const updateField = (key: keyof BasicFortigateForm) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const value = event.target instanceof HTMLInputElement && event.target.type === "checkbox" ? event.target.checked : event.target.value;
     setForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const updateVlanDraft = (key: keyof VlanDraft) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const value = event.target.value;
+    setVlanDraft((current) => ({ ...current, [key]: key === "allowInternet" ? value === "yes" : value }));
+  };
+
+  const updatePolicyDraft = (key: keyof PolicyDraft) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const value = event.target.value;
+    setPolicyDraft((current) => ({
+      ...current,
+      [key]: value,
+      ...(key === "destination" && current.nat === "AUTO" ? { nat: "AUTO" as NatMode } : {}),
+    }));
+  };
+
+  const addVlan = () => {
+    const newVlan = { ...vlanDraft, uid: makeUid("vlan") };
+    setVlans((current) => [...current, newVlan]);
+    setVlanDraft((current) => ({
+      ...defaultVlanDraft,
+      vlanId: String(Number(current.vlanId || 30) + 10),
+      name: `VLAN${Number(current.vlanId || 30) + 10}_NEW`,
+    }));
+  };
+
+  const deleteVlan = (uid: string) => {
+    const remainingVlans = vlans.filter((vlan) => vlan.uid !== uid);
+    setVlans(remainingVlans);
+    setPolicies((current) => current.filter((policy) => policy.sourceVlanUid !== uid && policy.destination !== uid));
+    setPolicyDraft((current) => ({
+      ...current,
+      sourceVlanUid: current.sourceVlanUid === uid ? remainingVlans[0]?.uid || "" : current.sourceVlanUid,
+      destination: current.destination === uid ? internetDestination : current.destination,
+    }));
+  };
+
+  const addPolicy = () => {
+    if (!policyDraft.sourceVlanUid) return;
+    setPolicies((current) => [...current, { ...policyDraft, uid: makeUid("policy") }]);
+    setPolicyDraft((current) => ({ ...current, name: "นโยบายใหม่" }));
+  };
+
+  const deletePolicy = (uid: string) => {
+    setPolicies((current) => current.filter((policy) => policy.uid !== uid));
   };
 
   const copyConfig = async () => {
@@ -313,7 +554,70 @@ export default function Home() {
               </div>
             </ModuleCard>
 
-            <ModuleCard id="dhcp" icon="📡" title="3. DHCP Server" description="กำหนดช่วง IP, DNS และ Gateway ที่จะแจกให้ Client ใน LAN">
+            <ModuleCard id="vlans" icon="🧩" title="3. Multi VLAN และ DHCP ต่อ VLAN" description="เพิ่ม VLAN ได้หลายวง กำหนด Gateway, DHCP และสถานะอนุญาตออกอินเทอร์เน็ตแยกต่อ VLAN">
+              <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                <Field label="VLAN Name" hint="เช่น VLAN10_USERS หรือ VLAN20_SERVERS">
+                  <input className={inputClass} value={vlanDraft.name} onChange={updateVlanDraft("name")} placeholder="VLAN10_USERS" />
+                </Field>
+                <Field label="VLAN ID" hint="ตัวเลข VLAN จากแผน Network">
+                  <input className={inputClass} value={vlanDraft.vlanId} onChange={updateVlanDraft("vlanId")} placeholder="10" />
+                </Field>
+                <Field label="Interface" hint="พอร์ต Trunk/Parent เช่น port2">
+                  <input className={inputClass} value={vlanDraft.interfaceName} onChange={updateVlanDraft("interfaceName")} placeholder="port2" />
+                </Field>
+                <Field label="Gateway IP">
+                  <input className={inputClass} value={vlanDraft.gatewayIp} onChange={updateVlanDraft("gatewayIp")} placeholder="192.168.10.1" />
+                </Field>
+                <Field label="Subnet Mask">
+                  <input className={inputClass} value={vlanDraft.subnetMask} onChange={updateVlanDraft("subnetMask")} placeholder="255.255.255.0" />
+                </Field>
+                <Field label="Allow Internet" hint="ถ้าใช่ ควรมี Policy ไป Internet และเปิด NAT">
+                  <select className={inputClass} value={vlanDraft.allowInternet ? "yes" : "no"} onChange={updateVlanDraft("allowInternet")}>
+                    <option value="yes">ใช่ อนุญาตออกอินเทอร์เน็ต</option>
+                    <option value="no">ไม่ใช่ ใช้งานภายในเท่านั้น</option>
+                  </select>
+                </Field>
+                <Field label="DHCP Start IP">
+                  <input className={inputClass} value={vlanDraft.dhcpStartIp} onChange={updateVlanDraft("dhcpStartIp")} placeholder="192.168.10.100" />
+                </Field>
+                <Field label="DHCP End IP">
+                  <input className={inputClass} value={vlanDraft.dhcpEndIp} onChange={updateVlanDraft("dhcpEndIp")} placeholder="192.168.10.200" />
+                </Field>
+                <div className="flex items-end">
+                  <button type="button" onClick={addVlan} className="w-full rounded-2xl bg-cyan-300 px-5 py-3 text-sm font-black text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-200">เพิ่ม VLAN</button>
+                </div>
+              </div>
+              <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-700/70">
+                <table className="w-full min-w-[900px] text-left text-sm">
+                  <thead className="bg-slate-950/80 text-slate-300">
+                    <tr>
+                      <th className="px-4 py-3">VLAN</th>
+                      <th className="px-4 py-3">ID</th>
+                      <th className="px-4 py-3">Interface</th>
+                      <th className="px-4 py-3">Gateway</th>
+                      <th className="px-4 py-3">DHCP Range</th>
+                      <th className="px-4 py-3">Internet</th>
+                      <th className="px-4 py-3">ลบ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800 bg-slate-950/45">
+                    {vlans.map((vlan) => (
+                      <tr key={vlan.uid}>
+                        <td className="px-4 py-3 font-bold text-white">{getVlanName(vlan)}</td>
+                        <td className="px-4 py-3">{vlan.vlanId}</td>
+                        <td className="px-4 py-3">{vlan.interfaceName}</td>
+                        <td className="px-4 py-3">{vlan.gatewayIp}</td>
+                        <td className="px-4 py-3">{vlan.dhcpStartIp} - {vlan.dhcpEndIp}</td>
+                        <td className="px-4 py-3">{vlan.allowInternet ? "อนุญาต" : "ไม่อนุญาต"}</td>
+                        <td className="px-4 py-3"><button type="button" onClick={() => deleteVlan(vlan.uid)} className="rounded-xl border border-red-300/30 px-3 py-2 text-xs font-bold text-red-100 hover:bg-red-500/20">ลบ</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </ModuleCard>
+
+            <ModuleCard id="dhcp" icon="📡" title="4. DHCP Server" description="กำหนดช่วง IP, DNS และ Gateway ที่จะแจกให้ Client ใน LAN">
               <div className="grid gap-5 md:grid-cols-2">
                 <Field label="DHCP start IP" hint="IP แรกของช่วงที่จะแจกให้ Client">
                   <input className={inputClass} value={form.dhcpStartIp} onChange={updateField("dhcpStartIp")} placeholder="192.168.1.100" />
@@ -333,19 +637,75 @@ export default function Home() {
               </div>
             </ModuleCard>
 
-            <ModuleCard id="policy" icon="🛡️" title="4. Basic Firewall Policy" description="สร้าง Policy พื้นฐาน LAN ไป Internet: Service ALL, Action ACCEPT และ NAT Enable อัตโนมัติ">
-              <div className="grid gap-3 text-sm text-slate-200 md:grid-cols-4">
-                <SummaryTile label="ต้นทาง" value={form.lanInterface} />
-                <SummaryTile label="ปลายทาง" value={form.wanInterface} />
-                <SummaryTile label="Service / Action" value="ALL / ACCEPT" />
-                <div className="rounded-2xl border border-emerald-300/25 bg-emerald-400/10 p-4 shadow-lg shadow-emerald-950/20">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">NAT</p>
-                  <p className="mt-2 text-sm font-black text-emerald-50">Enable</p>
+            <ModuleCard id="policy" icon="🛡️" title="5. Firewall Policy Builder และ NAT Options" description="สร้าง Policy หลายรายการ เลือกต้นทาง ปลายทาง Service, Action และ NAT แบบ Auto/Enable/Disable">
+              <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                <Field label="Policy Name">
+                  <input className={inputClass} value={policyDraft.name} onChange={updatePolicyDraft("name")} placeholder="Users_to_Internet" />
+                </Field>
+                <Field label="Source VLAN">
+                  <select className={inputClass} value={policyDraft.sourceVlanUid} onChange={updatePolicyDraft("sourceVlanUid")}>
+                    {vlans.map((vlan) => <option key={vlan.uid} value={vlan.uid}>{getVlanName(vlan)}</option>)}
+                  </select>
+                </Field>
+                <Field label="Destination" hint="Internet จะเปิด NAT อัตโนมัติเมื่อเลือก Auto">
+                  <select className={inputClass} value={policyDraft.destination} onChange={updatePolicyDraft("destination")}>
+                    <option value={internetDestination}>อินเทอร์เน็ต</option>
+                    {vlans.map((vlan) => <option key={vlan.uid} value={vlan.uid}>{getVlanName(vlan)}</option>)}
+                  </select>
+                </Field>
+                <Field label="Services">
+                  <select className={inputClass} value={policyDraft.service} onChange={updatePolicyDraft("service")}>
+                    {firewallServices.map((service) => <option key={service} value={service}>{service}</option>)}
+                  </select>
+                </Field>
+                <Field label="Action">
+                  <select className={inputClass} value={policyDraft.action} onChange={updatePolicyDraft("action")}>
+                    <option value="ACCEPT">ACCEPT - อนุญาต</option>
+                    <option value="DENY">DENY - ปฏิเสธ</option>
+                  </select>
+                </Field>
+                <Field label="NAT" hint="Auto: Internet = Enable, VLAN ภายใน = Disable">
+                  <select className={inputClass} value={policyDraft.nat} onChange={updatePolicyDraft("nat")}>
+                    <option value="AUTO">Auto</option>
+                    <option value="ENABLE">Enable</option>
+                    <option value="DISABLE">Disable</option>
+                  </select>
+                </Field>
+                <div className="md:col-span-2 xl:col-span-3">
+                  <button type="button" onClick={addPolicy} disabled={vlans.length === 0} className="rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-slate-950 shadow-lg shadow-emerald-950/30 transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-40">เพิ่ม Firewall Policy</button>
                 </div>
+              </div>
+              <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-700/70">
+                <table className="w-full min-w-[900px] text-left text-sm">
+                  <thead className="bg-slate-950/80 text-slate-300">
+                    <tr>
+                      <th className="px-4 py-3">Policy</th>
+                      <th className="px-4 py-3">Source</th>
+                      <th className="px-4 py-3">Destination</th>
+                      <th className="px-4 py-3">Service</th>
+                      <th className="px-4 py-3">Action</th>
+                      <th className="px-4 py-3">NAT</th>
+                      <th className="px-4 py-3">ลบ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800 bg-slate-950/45">
+                    {policies.map((policy) => (
+                      <tr key={policy.uid}>
+                        <td className="px-4 py-3 font-bold text-white">{policy.name}</td>
+                        <td className="px-4 py-3">{getVlanName(vlans.find((vlan) => vlan.uid === policy.sourceVlanUid))}</td>
+                        <td className="px-4 py-3">{getDestinationName(policy.destination, vlans)}</td>
+                        <td className="px-4 py-3">{policy.service}</td>
+                        <td className="px-4 py-3">{policy.action}</td>
+                        <td className="px-4 py-3">{getNatLabel(policy)}</td>
+                        <td className="px-4 py-3"><button type="button" onClick={() => deletePolicy(policy.uid)} className="rounded-xl border border-red-300/30 px-3 py-2 text-xs font-bold text-red-100 hover:bg-red-500/20">ลบ</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </ModuleCard>
 
-            <ModuleCard id="nat-dns" icon="🔁" title="5. NAT / DNS / Gateway" description="ตรวจสอบค่า NAT, DNS และ Default Gateway ก่อนสร้าง CLI เพื่อหลีกเลี่ยงปัญหาออกอินเทอร์เน็ตไม่ได้">
+            <ModuleCard id="nat-dns" icon="🔁" title="6. NAT / DNS / Gateway" description="ตรวจสอบค่า NAT, DNS และ Default Gateway ก่อนสร้าง CLI เพื่อหลีกเลี่ยงปัญหาออกอินเทอร์เน็ตไม่ได้">
               <div className="grid gap-4 md:grid-cols-3">
                 <SummaryTile label="NAT Status" value="Enable สำหรับ LAN to Internet" />
                 <SummaryTile label="DNS" value={`${form.dnsPrimary} / ${form.dnsSecondary}`} />
@@ -353,7 +713,7 @@ export default function Home() {
               </div>
             </ModuleCard>
 
-            <ModuleCard id="vpn" icon="🔐" title="6. Optional SSL VPN" description="เปิดเฉพาะเมื่อไซต์นี้ต้องการให้ผู้ใช้นอกองค์กร VPN เข้ามาใช้งาน LAN">
+            <ModuleCard id="vpn" icon="🔐" title="7. Optional SSL VPN" description="เปิดเฉพาะเมื่อไซต์นี้ต้องการให้ผู้ใช้นอกองค์กร VPN เข้ามาใช้งาน LAN">
               <label className="mb-5 flex cursor-pointer items-center justify-between gap-4 rounded-2xl border border-slate-700/70 bg-slate-950/60 p-4">
                 <span>
                   <span className="block font-bold text-white">Enable SSL VPN</span>
@@ -381,7 +741,7 @@ export default function Home() {
               )}
             </ModuleCard>
 
-            <ModuleCard id="checklist" icon="✅" title="7. Firmware และ Testing Checklist" description="Checklist สำหรับ Engineer มือใหม่ ไม่มีคำสั่ง Upgrade Firmware จริงเพื่อความปลอดภัย">
+            <ModuleCard id="checklist" icon="✅" title="8. Firmware และ Testing Checklist" description="Checklist สำหรับ Engineer มือใหม่ ไม่มีคำสั่ง Upgrade Firmware จริงเพื่อความปลอดภัย">
               <div className="grid gap-5 lg:grid-cols-2">
                 <div>
                   <h3 className="mb-3 font-bold text-cyan-100">Firmware และ Backup</h3>
@@ -394,7 +754,7 @@ export default function Home() {
               </div>
             </ModuleCard>
 
-            <ModuleCard id="export" icon="🚀" title="8. Generate และ Export Config" description="กด Generate เพื่อสร้าง CLI จากข้อมูลทั้งหมด จากนั้น Copy หรือ Export เป็นไฟล์ .txt">
+            <ModuleCard id="export" icon="🚀" title="9. Generate และ Export Config" description="กด Generate เพื่อสร้าง CLI จากข้อมูลทั้งหมด จากนั้น Copy หรือ Export เป็นไฟล์ .txt">
               <div className="flex flex-col gap-3 sm:flex-row">
                 <button type="button" onClick={() => setHasGeneratedConfig(true)} className="rounded-2xl bg-cyan-300 px-6 py-3 text-sm font-black text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-200">
                   Generate FortiGate CLI
@@ -413,15 +773,17 @@ export default function Home() {
                   <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-200">Summary</p>
                   <h2 className="mt-1 text-xl font-black text-white">ภาพรวม Config</h2>
                 </div>
-                <span className="rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-1 text-xs font-bold text-cyan-100">{getGeneratedSectionCount(form.enableSslVpn)} sections</span>
+                <span className="rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-1 text-xs font-bold text-cyan-100">{getGeneratedSectionCount(form.enableSslVpn, vlans, policies)} sections</span>
               </div>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
                 <SummaryTile label="WAN interface" value={`${form.wanInterface} / ${getWanModeLabel(form.wanConnectionType)}`} />
                 <SummaryTile label="LAN subnet" value={`${form.lanIpAddress} ${form.lanSubnetMask}`} />
                 <SummaryTile label="DHCP range" value={`${form.dhcpStartIp} - ${form.dhcpEndIp}`} />
-                <SummaryTile label="NAT status" value="Enable" />
+                <SummaryTile label="NAT status" value="Enable / Policy NAT options" />
+                <SummaryTile label="VLAN count" value={`${vlans.length} VLAN`} />
+                <SummaryTile label="Policy count" value={`${policies.length} policies`} />
                 <SummaryTile label="VPN status" value={form.enableSslVpn ? "เปิด SSL VPN" : "ปิด SSL VPN"} />
-                <SummaryTile label="Generated sections" value={`${getGeneratedSectionCount(form.enableSslVpn)} ส่วน`} />
+                <SummaryTile label="Generated sections" value={`${getGeneratedSectionCount(form.enableSslVpn, vlans, policies)} ส่วน`} />
               </div>
             </section>
 
