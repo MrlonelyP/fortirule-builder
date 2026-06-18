@@ -8,6 +8,7 @@ type FortiGateModel = "40F" | "60F" | "70F" | "70G" | "80F" | "90G" | "100F" | "
 type Service = "ALL" | "HTTP" | "HTTPS" | "DNS" | "RDP" | "PING";
 type Action = "ACCEPT" | "DENY";
 type NatMode = "AUTO" | "ENABLE" | "DISABLE";
+type AddressMode = "ALL" | "VLAN_SUBNET" | "CUSTOM";
 type ZoneStatus = "Ready" | "Need Config" | "Warning" | "Disabled";
 type SelectedZone = "wan" | "vlan-10" | "vlan-20" | "vlan-30" | "vlan-40" | "vpn" | "nat" | "policy" | "backup";
 
@@ -62,6 +63,15 @@ type PolicyRule = {
   service: Service;
   action: Action;
   nat: NatMode;
+  sourceAddressMode: AddressMode;
+  sourceAddressName: string;
+  sourceSubnet: string;
+  destinationAddressMode: AddressMode;
+  destinationAddressName: string;
+  destinationSubnet: string;
+  userGroup: string;
+  schedule: string;
+  logTraffic: boolean;
 };
 
 type VlanDraft = Omit<Vlan, "uid">;
@@ -78,6 +88,7 @@ const internetDestination = "internet";
 const fortigateModels: FortiGateModel[] = ["40F", "60F", "70F", "70G", "80F", "90G", "100F", "100G", "200F", "400F", "Custom"];
 const fortiOsVersions: FortiOsVersion[] = ["7.0", "7.2", "7.4", "7.6"];
 const firewallServices: Service[] = ["ALL", "HTTP", "HTTPS", "DNS", "RDP", "PING"];
+const addressModes: AddressMode[] = ["ALL", "VLAN_SUBNET", "CUSTOM"];
 
 const defaultProject: ProjectProfile = {
   projectName: "ABC Company - Head Office",
@@ -129,8 +140,8 @@ const defaultVlanDraft: VlanDraft = {
 };
 
 const defaultPolicies: PolicyRule[] = [
-  { uid: "policy-client-internet", name: "Client_to_Internet", sourceVlanUid: "vlan-20", destination: internetDestination, service: "ALL", action: "ACCEPT", nat: "AUTO" },
-  { uid: "policy-cctv-server", name: "CCTV_to_Server", sourceVlanUid: "vlan-40", destination: "vlan-10", service: "HTTPS", action: "DENY", nat: "DISABLE" },
+  { uid: "policy-client-internet", name: "Client_to_Internet", sourceVlanUid: "vlan-20", destination: internetDestination, service: "ALL", action: "ACCEPT", nat: "AUTO", sourceAddressMode: "VLAN_SUBNET", sourceAddressName: "ADDR_Client_Subnet", sourceSubnet: "192.168.20.0 255.255.255.0", destinationAddressMode: "ALL", destinationAddressName: "all", destinationSubnet: "0.0.0.0 0.0.0.0", userGroup: "", schedule: "always", logTraffic: true },
+  { uid: "policy-cctv-server", name: "CCTV_to_Server", sourceVlanUid: "vlan-40", destination: "vlan-10", service: "HTTPS", action: "DENY", nat: "DISABLE", sourceAddressMode: "VLAN_SUBNET", sourceAddressName: "ADDR_CCTV_Subnet", sourceSubnet: "192.168.40.0 255.255.255.0", destinationAddressMode: "VLAN_SUBNET", destinationAddressName: "ADDR_Server_Subnet", destinationSubnet: "192.168.10.0 255.255.255.0", userGroup: "SOC_Operators", schedule: "always", logTraffic: true },
 ];
 
 const defaultPolicyDraft: PolicyDraft = {
@@ -140,6 +151,15 @@ const defaultPolicyDraft: PolicyDraft = {
   service: "ALL",
   action: "ACCEPT",
   nat: "AUTO",
+  sourceAddressMode: "VLAN_SUBNET",
+  sourceAddressName: "ADDR_Source_Subnet",
+  sourceSubnet: "192.168.20.0 255.255.255.0",
+  destinationAddressMode: "ALL",
+  destinationAddressName: "all",
+  destinationSubnet: "0.0.0.0 0.0.0.0",
+  userGroup: "",
+  schedule: "always",
+  logTraffic: true,
 };
 
 const deploymentChecklist = [
@@ -274,6 +294,59 @@ end`,
     .join("\n\n");
 }
 
+function getPolicyAddressName(policy: PolicyRule | PolicyDraft, side: "source" | "destination", vlans: Vlan[]) {
+  const mode = side === "source" ? policy.sourceAddressMode : policy.destinationAddressMode;
+  if (mode === "ALL") return "all";
+  if (mode === "CUSTOM") return side === "source" ? policy.sourceAddressName : policy.destinationAddressName;
+  if (side === "source") {
+    const source = vlans.find((vlan) => vlan.uid === policy.sourceVlanUid);
+    return source ? `ADDR_VLAN${source.vlanId}_${source.name}` : policy.sourceAddressName;
+  }
+  if (policy.destination === internetDestination) return "all";
+  const destination = vlans.find((vlan) => vlan.uid === policy.destination);
+  return destination ? `ADDR_VLAN${destination.vlanId}_${destination.name}` : policy.destinationAddressName;
+}
+
+function getPolicySubnet(policy: PolicyRule | PolicyDraft, side: "source" | "destination", vlans: Vlan[]) {
+  const mode = side === "source" ? policy.sourceAddressMode : policy.destinationAddressMode;
+  if (mode === "CUSTOM") return side === "source" ? policy.sourceSubnet : policy.destinationSubnet;
+  if (mode === "VLAN_SUBNET") {
+    const vlan = side === "source" ? vlans.find((item) => item.uid === policy.sourceVlanUid) : vlans.find((item) => item.uid === policy.destination);
+    if (vlan) return `${vlan.gatewayIp.replace(/\.\d+$/, ".0")} ${vlan.subnetMask}`;
+  }
+  return "";
+}
+
+function buildAddressAndUserCli(policies: PolicyRule[], vlans: Vlan[]) {
+  const addressLines = policies.flatMap((policy) => (["source", "destination"] as const).map((side) => {
+    const mode = side === "source" ? policy.sourceAddressMode : policy.destinationAddressMode;
+    if (mode === "ALL" || (side === "destination" && policy.destination === internetDestination)) return "";
+    const addressName = getPolicyAddressName(policy, side, vlans);
+    const subnet = getPolicySubnet(policy, side, vlans);
+    if (!addressName || !subnet) return "";
+    return `    edit \"${addressName}\"
+        set subnet ${subnet}
+    next`;
+  })).filter(Boolean);
+
+  const userGroups = Array.from(new Set(policies.map((policy) => policy.userGroup.trim()).filter(Boolean)));
+  const userGroupCli = userGroups.length
+    ? `# User groups referenced by policies - เติมสมาชิก user จริงใน FortiGate ก่อนใช้งาน
+config user group
+${userGroups.map((group) => `    edit \"${group}\"
+        set member \"local-user-placeholder\"
+    next`).join("\n")}
+end`
+    : "# No policy user groups defined";
+
+  return `# Address objects generated from detailed policy builder
+${addressLines.length ? `config firewall address
+${addressLines.join("\n")}
+end` : "# No custom address objects required"}
+
+${userGroupCli}`;
+}
+
 function buildPolicyCli(policies: PolicyRule[], vlans: Vlan[], wanInterface: string) {
   return policies
     .map((policy, index) => {
@@ -289,12 +362,13 @@ config firewall policy
         set name \"${policy.name}\"
         set srcintf \"${getVlanName(source)}\"
         set dstintf \"${destinationInterface}\"
-        set srcaddr \"all\"
-        set dstaddr \"all\"
+        set srcaddr \"${getPolicyAddressName(policy, "source", vlans)}\"
+        set dstaddr \"${getPolicyAddressName(policy, "destination", vlans)}\"
         set action ${policy.action.toLowerCase()}
-        set schedule \"always\"
+        set schedule \"${policy.schedule || "always"}\"
         set service \"${policy.service}\"
-        set logtraffic all
+        ${policy.userGroup.trim() ? `set groups \"${policy.userGroup.trim()}\"` : "# No user group restriction"}
+        set logtraffic ${policy.logTraffic ? "all" : "disable"}
         set nat ${getEffectiveNat(policy)}
     next
 end`;
@@ -363,6 +437,9 @@ config system dns
 end
 
 ${buildDefaultRouteCli(form)}
+
+# === Firewall Address Objects / User Groups ===
+${buildAddressAndUserCli(policies, vlans)}
 
 # === Firewall Policy Roads / NAT ===
 ${buildPolicyCli(policies, vlans, form.wanInterface)}
@@ -450,7 +527,8 @@ export default function Home() {
     setVlans((current) => current.map((vlan) => (vlan.uid === uid ? { ...vlan, [key]: key === "allowInternet" ? value === "yes" : value } : vlan)));
   };
   const updatePolicyDraft = (key: keyof PolicyDraft) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setPolicyDraft((current) => ({ ...current, [key]: event.target.value }));
+    const value = event.target instanceof HTMLInputElement && event.target.type === "checkbox" ? event.target.checked : event.target.value;
+    setPolicyDraft((current) => ({ ...current, [key]: value }));
   };
 
   const addVlan = () => {
@@ -544,11 +622,20 @@ export default function Home() {
           <div><p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-300">Policy Control Center</p><h3 className="text-xl font-black text-white">Firewall Policy Roads / NAT</h3><p className="text-sm text-slate-400">ถนนเรืองแสงบนแผนที่คือ policy ที่เชื่อม zone ต่าง ๆ</p></div>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Policy Name"><input className={inputClass} value={policyDraft.name} onChange={updatePolicyDraft("name")} /></Field>
-            <Field label="Source"><select className={inputClass} value={policyDraft.sourceVlanUid} onChange={updatePolicyDraft("sourceVlanUid")}>{vlans.map((vlan) => <option key={vlan.uid} value={vlan.uid}>{getVlanName(vlan)}</option>)}</select></Field>
+            <Field label="Source VLAN"><select className={inputClass} value={policyDraft.sourceVlanUid} onChange={updatePolicyDraft("sourceVlanUid")}>{vlans.map((vlan) => <option key={vlan.uid} value={vlan.uid}>{getVlanName(vlan)}</option>)}</select></Field>
             <Field label="Destination"><select className={inputClass} value={policyDraft.destination} onChange={updatePolicyDraft("destination")}><option value={internetDestination}>Internet</option>{vlans.map((vlan) => <option key={vlan.uid} value={vlan.uid}>{getVlanName(vlan)}</option>)}</select></Field>
+            <Field label="Source Address"><select className={inputClass} value={policyDraft.sourceAddressMode} onChange={updatePolicyDraft("sourceAddressMode")}>{addressModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select></Field>
+            <Field label="Src Addr Name"><input className={inputClass} value={policyDraft.sourceAddressName} onChange={updatePolicyDraft("sourceAddressName")} /></Field>
+            <Field label="Src Subnet"><input className={inputClass} value={policyDraft.sourceSubnet} onChange={updatePolicyDraft("sourceSubnet")} /></Field>
+            <Field label="Destination Address"><select className={inputClass} value={policyDraft.destinationAddressMode} onChange={updatePolicyDraft("destinationAddressMode")}>{addressModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select></Field>
+            <Field label="Dst Addr Name"><input className={inputClass} value={policyDraft.destinationAddressName} onChange={updatePolicyDraft("destinationAddressName")} /></Field>
+            <Field label="Dst Subnet"><input className={inputClass} value={policyDraft.destinationSubnet} onChange={updatePolicyDraft("destinationSubnet")} /></Field>
+            <Field label="User Group"><input className={inputClass} placeholder="เช่น HR_Users หรือเว้นว่าง" value={policyDraft.userGroup} onChange={updatePolicyDraft("userGroup")} /></Field>
+            <Field label="Schedule"><input className={inputClass} value={policyDraft.schedule} onChange={updatePolicyDraft("schedule")} /></Field>
             <Field label="Service"><select className={inputClass} value={policyDraft.service} onChange={updatePolicyDraft("service")}>{firewallServices.map((service) => <option key={service}>{service}</option>)}</select></Field>
             <Field label="Action"><select className={inputClass} value={policyDraft.action} onChange={updatePolicyDraft("action")}><option value="ACCEPT">ALLOW</option><option value="DENY">DENY</option></select></Field>
             <Field label="NAT"><select className={inputClass} value={policyDraft.nat} onChange={updatePolicyDraft("nat")}><option value="AUTO">AUTO</option><option value="ENABLE">Enable</option><option value="DISABLE">Disable</option></select></Field>
+            <label className="flex items-center justify-between rounded-xl border border-cyan-300/20 bg-cyan-300/5 px-3 py-2 text-sm font-bold text-cyan-100">Log Traffic<input className="h-5 w-5 accent-cyan-300" type="checkbox" checked={policyDraft.logTraffic} onChange={updatePolicyDraft("logTraffic")} /></label>
           </div>
           <button onClick={addPolicy} className="rounded-2xl bg-cyan-300 px-4 py-3 text-sm font-black text-slate-950 shadow-lg shadow-cyan-500/25" type="button">+ Add Policy Road</button>
         </div>
@@ -734,10 +821,10 @@ export default function Home() {
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
-                <thead className="bg-slate-950/80 text-xs uppercase tracking-[0.15em] text-cyan-200/70"><tr><th className="px-4 py-3">ID</th><th>Source</th><th>Destination</th><th>Service</th><th>Action</th><th>NAT</th><th>Status</th></tr></thead>
+                <thead className="bg-slate-950/80 text-xs uppercase tracking-[0.15em] text-cyan-200/70"><tr><th className="px-4 py-3">ID</th><th>Source</th><th>Src Addr</th><th>Destination</th><th>Dst Addr</th><th>User Group</th><th>Service</th><th>Action</th><th>NAT</th><th>Status</th></tr></thead>
                 <tbody className="divide-y divide-cyan-300/10">
                   {policies.map((policy, index) => (
-                    <tr key={policy.uid} className="hover:bg-cyan-300/5"><td className="px-4 py-3">{index + 1}</td><td>{getVlanName(vlans.find((vlan) => vlan.uid === policy.sourceVlanUid))}</td><td>{getDestinationName(policy.destination, vlans)}</td><td>{policy.service}</td><td><span className={`rounded-full px-2 py-1 text-xs font-bold ${policy.action === "ACCEPT" ? "bg-emerald-400/10 text-emerald-300" : "bg-red-400/10 text-red-300"}`}>{policy.action === "ACCEPT" ? "ALLOW" : "DENY"}</span></td><td><span className={`rounded-full px-2 py-1 text-xs font-bold ${getEffectiveNat(policy) === "enable" ? "bg-emerald-400/10 text-emerald-300" : "bg-red-400/10 text-red-300"}`}>{getNatLabel(policy)}</span></td><td><span className="text-emerald-300">Ready</span></td></tr>
+                    <tr key={policy.uid} className="hover:bg-cyan-300/5"><td className="px-4 py-3">{index + 1}</td><td>{getVlanName(vlans.find((vlan) => vlan.uid === policy.sourceVlanUid))}</td><td>{getPolicyAddressName(policy, "source", vlans)}</td><td>{getDestinationName(policy.destination, vlans)}</td><td>{getPolicyAddressName(policy, "destination", vlans)}</td><td>{policy.userGroup || "-"}</td><td>{policy.service}</td><td><span className={`rounded-full px-2 py-1 text-xs font-bold ${policy.action === "ACCEPT" ? "bg-emerald-400/10 text-emerald-300" : "bg-red-400/10 text-red-300"}`}>{policy.action === "ACCEPT" ? "ALLOW" : "DENY"}</span></td><td><span className={`rounded-full px-2 py-1 text-xs font-bold ${getEffectiveNat(policy) === "enable" ? "bg-emerald-400/10 text-emerald-300" : "bg-red-400/10 text-red-300"}`}>{getNatLabel(policy)}</span></td><td><span className="text-emerald-300">Ready</span></td></tr>
                   ))}
                 </tbody>
               </table>
